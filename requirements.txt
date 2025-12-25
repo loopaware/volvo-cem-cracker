@@ -4,3 +4,4 @@ adafruit-blinka
 luma.oled
 luma.emulator
 pytest-image-diff
+pytest

@@ -1,15 +1,10 @@
-2025-12-25 12:40:00
-## Objective: Implement robust logging, email notifications, and ensure connectivity checks.
+# Plan for adding a health check
 
-## Tasks:
-*   [x] Refactor logging in `src/cracker.py` to use Python's `logging` module with rotation.
-    *   Target log path: `/var/log/volvo-cracker/cracker.log` (prod) or `./cracker.log` (dev).
-*   [x] Implement `EmailNotifier` class in `src/cracker.py`.
-    *   Use `smtplib` for Gmail SMTP.
-    *   Load credentials from `config.json`.
-    *   Run in a background thread, sending status updates periodically.
-    *   Handle and log errors without crashing.
-*   [x] Ensure `check_connection` reads data and logs it (Verify existing logic).
-*   [x] Create `config.json` template.
-*   [x] Update Ansible playbook to create log directory and manage permissions.
-*   [x] Verify locally with simulated voltage sag and email mock.
+1.  **DONE** Create `src/health_check.py` to check the health of the `cem-sim` service.
+2.  **DONE** Modify `src/sim_cem.py` to include a Flask-based health check endpoint.
+3.  **DONE** Update `docker-compose.yml` to use the health check and install `Flask` and `requests`.
+4.  **DONE** Restore `src/main.py` file.
+5.  **DONE** Update the `docker-compose.yml` file to use `src/main.py` instead of `src/cracker.py` and add the `service_healthy` condition.
+6.  **DONE** Remove `Flask` and `requests` from `requirements.txt` as they are only used for the health check in the Docker environment.
+7.  **DONE** Create `tests/test_health_check.py` to validate the health check.
+8.  **DONE** Add `pytest` to `requirements.txt`.

@@ -5,6 +5,7 @@ import random
 import threading
 import signal
 import sys
+from flask import Flask, jsonify
 
 # Constants matching cracker.py
 REQ_ID = 0x000FFFFE
@@ -25,6 +26,17 @@ class VolvoCEMSim:
         self.jitter = 0.0005       # 0.5ms jitter
         self.match_penalty = 0.003 # 3ms extra if prefix matches
 
+        # Flask Health Check
+        self.flask_app = Flask(__name__)
+        self.flask_app.add_url_rule('/health', 'health', self.health_check)
+        self.flask_thread = threading.Thread(target=self.run_flask, daemon=True)
+
+    def run_flask(self):
+        self.flask_app.run(host='0.0.0.0', port=5001)
+
+    def health_check(self):
+        return jsonify({"status": "ok"})
+
     def log(self, msg):
         print(f"[{time.strftime('%H:%M:%S')}] [CEM-SIM] {msg}")
 
@@ -44,6 +56,7 @@ class VolvoCEMSim:
         return f0, f1
 
     def run(self):
+        self.flask_thread.start()
         try:
             self.bus = can.interface.Bus(self.channel, interface='socketcan')
             self.log(f"Started on {self.channel} with PIN {self.secret_pin}")
