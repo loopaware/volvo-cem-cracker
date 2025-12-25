@@ -2,7 +2,7 @@ import logging
 import logging.handlers
 import sys
 import os
-from .config import LOG_FILE
+from .config import LOG_FILE, BCD_TABLE
 
 def setup_logging():
     log_path = LOG_FILE

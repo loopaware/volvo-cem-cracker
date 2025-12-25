@@ -4,6 +4,36 @@ import os
 from ..config import BCD_TABLE, SESSION_FILE
 from .unlock import unlock_attempt_fast
 
+def check_power_sag():
+    """
+    Detects if the power rail is dipping (e.g. during engine cranking).
+    In simulation: checks for a trigger file.
+    In production: could check /sys/class/leds/led1/brightness (Pi Power LED)
+    or a dedicated GPIO pin.
+    """
+    if os.path.exists("POWER_SAG.trigger"):
+        return True
+    return False
+
+def save_session(index, fixed_bytes, candidates_queue=None):
+    """
+    Save cracking session to file.
+    """
+    try:
+        state = {
+            "timestamp": time.time(),
+            "index": index,
+            "fixed_bytes": fixed_bytes,
+            "candidates_queue": candidates_queue or []
+        }
+        tmp_file = "session.json.tmp"
+        with open(tmp_file, "w") as f:
+            import json
+            json.dump(state, f)
+        os.replace(tmp_file, "session.json")
+    except Exception as e:
+        logging.error(f"Error saving session: {e}")
+
 def brute_force(bus, tx_msg, cem_id, shuffle, start_pin, start_index=0, candidates_queue=None):
     logging.info(f"Starting Brute Force from index {start_index}...")
     
@@ -47,14 +77,3 @@ def brute_force(bus, tx_msg, cem_id, shuffle, start_pin, start_index=0, candidat
             return current_pin
             
     return None
-
-def check_power_sag():
-    """
-    Detects if the power rail is dipping (e.g. during engine cranking).
-    In simulation: checks for a trigger file.
-    In production: could check /sys/class/leds/led1/brightness (Pi Power LED)
-    or a dedicated GPIO pin.
-    """
-    if os.path.exists("POWER_SAG.trigger"):
-        return True
-    return False

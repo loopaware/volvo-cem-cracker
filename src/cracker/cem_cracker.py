@@ -41,6 +41,51 @@ class CemCracker:
             self.shuffle = SHUFFLE_ORDERS[0]
             return False
 
+    def brute_force(self, start_pin, start_index=0, candidates_queue=None):
+        """
+        Wrapper method for brute force cracking.
+        
+        Args:
+            start_pin: Starting PIN prefix
+            start_index: Starting index for brute force
+            candidates_queue: Queue of candidate PIN prefixes
+            
+        Returns:
+            Found PIN or None
+        """
+        return brute_force(
+            self.bus, self.tx_msg, self.cem_id, self.shuffle,
+            start_pin, start_index=start_index, candidates_queue=candidates_queue
+        )
+
+    def unlock_attempt_timing(self, pin_bytes):
+        """
+        Perform unlock attempt with timing measurement.
+        
+        Args:
+            pin_bytes: PIN bytes to try
+            
+        Returns:
+            Tuple of (success, latency)
+        """
+        return unlock_attempt_timing(
+            self.bus, self.tx_msg, self.cem_id, self.shuffle, pin_bytes
+        )
+
+    def crack_timing(self, known_bytes=0):
+        """
+        Wrapper method for timing attack cracking.
+        
+        Args:
+            known_bytes: Number of known PIN bytes
+            
+        Returns:
+            List of candidate PIN prefixes
+        """
+        return crack_timing(
+            self.bus, self.tx_msg, self.cem_id, self.shuffle, known_bytes=known_bytes
+        )
+
     def check_connection(self):
         """
         Verifies CAN connection and CEM responsiveness.
