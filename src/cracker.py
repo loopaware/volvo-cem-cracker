@@ -396,6 +396,17 @@ class VolvoCracker:
         except:
             return None, None, []
 
+    def check_power_sag(self):
+        """
+        Detects if the power rail is dipping (e.g. during engine cranking).
+        In simulation: checks for a trigger file.
+        In production: could check /sys/class/leds/led1/brightness (Pi Power LED)
+        or a dedicated GPIO pin.
+        """
+        if os.path.exists("POWER_SAG.trigger"):
+            return True
+        return False
+
     def brute_force(self, start_pin, start_index=0, candidates_queue=None):
         log(f"Starting Brute Force from index {start_index}...")
         
@@ -405,6 +416,17 @@ class VolvoCracker:
         SAVE_INTERVAL = 2000 
         
         for i in range(start_index, total):
+            # --- VOLTAGE SAG / POWER FAIL CHECK ---
+            # In a real Swedish winter, cranking can drop voltage.
+            # We check a mock file or GPIO to simulate this.
+            if self.check_power_sag():
+                log("!!! VOLTAGE SAG DETECTED !!! Pausing for safety...")
+                self.save_session(i, start_pin, candidates_queue)
+                while self.check_power_sag():
+                    time.sleep(1)
+                log("Power stabilized. Resuming...")
+                start_t = time.time() # Reset rate calc
+
             # Optimized iteration
             rem = i
             d1, rem = divmod(rem, 10000)

@@ -1,0 +1,15 @@
+dependency:
+  name: galaxy
+driver:
+  name: docker
+platforms:
+  - name: pi-emulator-trixie
+    image: debian:trixie-slim
+    privileged: true
+    command: /sbin/init
+    volumes:
+      - /lib/modules:/lib/modules:ro
+provisioner:
+  name: ansible
+verifier:
+  name: ansible

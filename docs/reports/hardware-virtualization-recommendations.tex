@@ -1,0 +1,117 @@
+\documentclass[11pt, a4paper]{article}
+
+% --- UNIVERSAL PREAMBLE BLOCK ---
+\usepackage[a4paper, top=2.5cm, bottom=2.5cm, left=2cm, right=2cm]{geometry}
+\usepackage{fontspec}
+\usepackage[english, bidi=basic, provide=*]{babel}
+
+\babelprovide[import, onchar=ids fonts]{english}
+\babelfont{rm}{Noto Sans}
+
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{enumitem}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    filecolor=magenta,      
+    urlcolor=cyan,
+    pdftitle={Automated Visual and Input Verification for Volvo-CAN RPi Project},
+}
+
+\definecolor{codegreen}{rgb}{0,0.6,0}
+\definecolor{codegray}{rgb}{0.5,0.5,0.5}
+\definecolor{codepurple}{rgb}{0.58,0,0.82}
+\definecolor{backcolour}{rgb}{0.95,0.95,0.92}
+
+\lstset{
+    backgroundcolor=\color{backcolour},   
+    commentstyle=\color{codegreen},
+    keywordstyle=\color{magenta},
+    numberstyle=\tiny\color{codegray},
+    stringstyle=\color{codepurple},
+    basicstyle=\ttfamily\footnotesize,
+    breakatwhitespace=false,         
+    breaklines=true,                 
+    captionpos=b,                    
+    keepspaces=true,                 
+    numbers=left,                    
+    numbersep=5pt,                  
+    showspaces=false,                
+    showstringspaces=false,
+    showtabs=false,                  
+    tabsize=2
+}
+
+\title{Technical Proposal: Automated Visual \& Input Verification for Volvo-CAN RPi Project}
+\author{Systems Engineering Team}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\section{Executive Summary}
+This report outlines a comprehensive strategy for implementing "Playwright-style" automated testing for the 0.93-inch OLED display and GPIO-based inputs in a Raspberry Pi project. By utilizing virtual device drivers, kernel-level GPIO mocking, and environmental stress simulation, we enable a fully verifiable UI and interaction test suite capable of handling the rigors of Northern European winter operations.
+
+\section{Display Architecture: Hardware Abstraction}
+To achieve automated verification, we decouple the application logic from the physical I2C/SPI transport layer using a \textbf{Virtual Display Driver} pattern.
+
+\subsection{Hardware Abstraction Layer (HAL)}
+Utilizing the \texttt{luma.core} and \texttt{luma.emulator} libraries, we can switch between physical hardware and a software-defined "Capture" device based on the environment context.
+
+\section{Input Simulation (Buttons)}
+Simulating physical button presses (e.g., from a Kjell \& Co kit) is critical for menu navigation.
+
+\subsection{Method B: GPIO Mockup (Kernel Integration)}
+For the most realistic simulation, the Linux kernel module \texttt{gpio-mockup} creates virtual GPIO pins. The test runner can "press" these buttons by writing to \texttt{debugfs}, triggering the same interrupts as physical hardware.
+
+\section{Reliability: Noise, Signal, and Timing}
+Automotive environments are electrically "dirty." We propose the following reliability tests:
+
+\subsection{CAN Signal Integrity}
+Using \texttt{can-utils} and \texttt{vcan0}, we simulate common bus failures: \textbf{Bus Flooding}, \textbf{Corrupt Payloads}, and \textbf{Dropped Frames}.
+
+\section{Environmental Simulation (The Cold Start Challenge)}
+Operating in Sweden at -7$^\circ$C to -20$^\circ$C introduces physical risks that must be addressed in the software and testing lifecycle.
+
+\subsection{Cranking Voltage Sag Simulation}
+During an engine start, the 12V bus often sags to 6V-8V.
+\begin{itemize}
+    \item \textbf{The Test:} Simulate a "Power Sag" event where the 5V rail to the Pi drops to 4.5V for 2 seconds.
+    \item \textbf{Requirement:} The software must detect a low-voltage interrupt and pause SD card writes to prevent filesystem corruption.
+\end{itemize}
+
+\subsection{Cold-Weather Refresh Jitter}
+E-ink and OLED displays experience increased latency in sub-zero temperatures.
+\begin{itemize}
+    \item \textbf{The Test:} Add a artificial 500ms delay in the \texttt{capture} emulator to mimic slow refresh rates.
+    \item \textbf{Requirement:} Ensure the UI doesn't "race" (sending multiple draw commands before the first one is finished), which can lead to SPI bus lockups.
+\end{itemize}
+
+\subsection{Condensation and Boot Jitter}
+Rapid heating of a cold car creates condensation. We recommend a "Safe Boot" delay in the systemd service to allow internal components to stabilize before initializing the I2C bus.
+
+\section{Hardware Mitigation Recommendations}
+\begin{itemize}
+    \item \textbf{Conformal Coating:} Recommend applying a thin layer of silicone-based conformal coating to the Pi and display PCB to prevent short-circuits from Swedish winter condensation.
+    \item \textbf{Supercapacitor Buffer:} Use a small UPS HAT or supercapacitor bank to bridge the 2-second "crank gap" so the Pi doesn't reboot every time the engine starts.
+    \item \textbf{SD Card Grade:} Use "Industrial/Endurance" rated SD cards (pSLC) which handle extreme temperature cycles better than standard consumer cards.
+\end{itemize}
+
+\section{Automated Verification Workflow}
+The proposed "Playwright for Embedded" workflow:
+\begin{enumerate}
+    \item \textbf{Stimulation:} Inject a CAN frame or trigger a virtual button.
+    \item \textbf{Generation:} The application renders a frame to \texttt{actual.png}.
+    \item \textbf{Assertion:} \texttt{pytest-image-diff} compares the output against a "Golden Master."
+\end{enumerate}
+
+\section{Final Recommendation}
+Virtualizing the framebuffer and simulating the "crank sag" and refresh latency is essential for Swedish winter reliability. This framework ensures the system remains "Automotive Grade" even when the hardware is under physical stress.
+
+\end{document}

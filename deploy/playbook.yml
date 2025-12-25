@@ -136,15 +136,20 @@
       ignore_errors: yes
       become: yes
 
-    - name: Apply Overclock (1.2GHz)
+    - name: Apply Overclock (Pi Zero v1.3)
       blockinfile:
         path: /boot/firmware/config.txt
         marker: "# {mark} ANSIBLE MANAGED OVERCLOCK"
         content: |
-          # Pi Zero 2 W Moderate Overclock
-          arm_freq=1200
+          # Pi Zero v1.3 (BCM2835) Optimization
+          arm_freq=1085
+          gpu_freq=530
           over_voltage=2
-          # Ensure CAN HAT SPI is happy
+          core_freq=515
+          sdram_freq=533
+          over_voltage_sdram=1
+          
+          # CAN HAT (MCP2515)
           dtparam=spi=on
           dtoverlay=mcp2515-can0,oscillator=12000000,interrupt=25,spimaxfrequency=2000000
       become: yes

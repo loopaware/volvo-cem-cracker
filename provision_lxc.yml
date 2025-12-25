@@ -1,0 +1,41 @@
+---
+- name: Provision LXC Container on Proxmox
+  hosts: localhost
+  vars:
+    pve_node: "la-vmh-07"
+    pve_api_user: "root@pam"
+    pve_api_token_id: "tofu-token-2"
+    pve_api_token_secret: "4e5243d1-5536-4830-a1c0-d2ffeedee5c9"
+    pve_api_host: "10.32.2.11"
+    
+  tasks:
+    - name: Create LXC container
+      community.general.proxmox_lxc:
+        api_host: "{{ pve_api_host }}"
+        api_user: "{{ pve_api_user }}"
+        api_token_id: "{{ pve_api_token_id }}"
+        api_token_secret: "{{ pve_api_token_secret }}"
+        node: "{{ pve_node }}"
+        hostname: "volvo-cracker-test"
+        ostemplate: "pve-07-iso-nvme:vztmpl/debian-13-standard_13.1-2_amd64.tar.zst"
+        password: "Cracker123!"
+        storage: "pve-07-disk-nvme"
+        rootfs: "pve-07-disk-nvme:8"
+        netif:
+          net0: "name=eth0,bridge=vmbr0,ip=dhcp"
+        features:
+          - nesting=1
+        unprivileged: yes
+        state: present
+        pubkey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIC2Ge3By2ttnCFLKu+JiUGv6th3T6JNU+kgR/XCOnfKd uzanto@la-devel-11"
+      register: lxc_info
+
+    - name: Start LXC container
+      community.general.proxmox_lxc:
+        api_host: "{{ pve_api_host }}"
+        api_user: "{{ pve_api_user }}"
+        api_token_id: "{{ pve_api_token_id }}"
+        api_token_secret: "{{ pve_api_token_secret }}"
+        node: "{{ pve_node }}"
+        vmid: "{{ lxc_info.vmid }}"
+        state: started

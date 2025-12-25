@@ -95,6 +95,12 @@ This project has been ported to run on a **Raspberry Pi Zero 2 W** equipped with
 3.  **OLED Display** (SSD1306 128x64 I2C) - Optional, for status monitoring.
 4.  **OBD2 Cable** connected to CAN High/Low.
 
+### Recommended Hardware Mitigations (for Winter Operations)
+Based on our technical research for sub-zero environments:
+*   **Conformal Coating**: Apply silicone-based coating to PCBs to prevent short-circuits from condensation.
+*   **Supercapacitor Buffer**: Use a UPS HAT or supercapacitor bank to bridge the 2-second "crank gap" (voltage sag) during engine start.
+*   **Industrial SD Card**: Use pSLC/Endurance rated cards to handle extreme temperature cycles and power losses.
+
 ## Software Architecture
 *   `src/cracker.py`: Main Python script port of the Arduino logic.
 *   `src/monitor.py`: Service to display status and IP address on the OLED.

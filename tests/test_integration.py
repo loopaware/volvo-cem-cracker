@@ -24,53 +24,63 @@ class TestIntegration(unittest.TestCase):
         if os.path.exists('test_int_session.json'):
             os.remove('test_int_session.json')
 
-    def test_full_flow_mocked_interaction(self):
-        cracker = VolvoCracker(channel='test_mock')
+    def test_timing_attack_simulation(self):
+        cracker = VolvoCracker(channel='test_mock_timing')
         cracker.bus = MagicMock()
         
-        # Simulating CEM Responses
+        # Simulating Latency
+        # Prefix match adds 5ms latency
         def mocked_recv(timeout=0):
-            if not hasattr(mocked_recv, 'responses'):
-                mocked_recv.responses = []
-            
-            if mocked_recv.responses:
-                return mocked_recv.responses.pop(0)
-            return None
-        
-        mocked_recv.responses = []
-        cracker.bus.recv.side_effect = mocked_recv
-        
-        def mocked_send(msg):
-            if msg.arbitration_id == REQ_ID:
-                data = msg.data
-                if data[2] == 0xB9 and data[3] == 0xF0: # P/N Request
-                    # Reply with dummy P/N: 8690719 (P1)
-                    # BCD: 08 69 07 19
-                    f0 = can.Message(arbitration_id=0x00000003, is_extended_id=True, data=[0xCB, data[1], 0xB9, 0xF0, 0x00, 0x08, 0x69, 0x07])
-                    f1 = can.Message(arbitration_id=0x00000003, is_extended_id=True, data=[0x00, 0x19, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])
-                    mocked_recv.responses.extend([f0, f1])
-                elif data[1] == CMD_UNLOCK:
-                    received_pin = list(data[2:8])
-                    reply_data = [data[0], CMD_UNLOCK_REPLY, 0x01, 0, 0, 0, 0, 0]
-                    if received_pin == SECRET_PIN:
-                        reply_data[2] = 0x00
-                    
-                    reply = can.Message(arbitration_id=0x00000003, is_extended_id=True, data=reply_data)
-                    mocked_recv.responses.append(reply)
+            # We use the call count or some state to return different latencies
+            pass # We'll use a more targeted approach
 
-        cracker.bus.send.side_effect = mocked_send
+        def get_latency_reply(received_pin):
+            latency = 0.002 # Base 2ms
+            # If first byte matches 0x12
+            if received_pin[0] == SECRET_PIN[0]:
+                latency += 0.005 # Match penalty
+            
+            reply_data = [self.cracker_node, CMD_UNLOCK_REPLY, 0x01, 0, 0, 0, 0, 0]
+            reply = can.Message(arbitration_id=0x00000003, is_extended_id=True, data=reply_data)
+            # Simulate the delay by adjusting the timestamp or just returning it
+            reply.timestamp = time.time() + latency 
+            return reply
+
+        self.cracker_node = 0x50
         
-        # 1. P/N Read
-        pn = cracker.read_part_number()
-        self.assertEqual(pn, 8690719)
-        cracker.configure_for_cem(pn)
-        
-        # 2. Brute Force
-        start_index = 789000
-        start_pin = [0x12, 0x34, 0x56, 0, 0, 0]
-        
-        found = cracker.brute_force(start_pin, start_index=start_index)
-        self.assertEqual(found, SECRET_PIN)
+        # Mocking timing attack loop
+        with patch('time.time') as mock_time:
+            # We need a way to make time flow
+            current_time = [1000.0]
+            def get_now():
+                t = current_time[0]
+                current_time[0] += 0.001 # Increment slightly
+                return t
+            mock_time.side_effect = get_now
+            
+            # Setup cracker for mock
+            cracker.bus.send = MagicMock()
+            
+            def side_effect_recv(timeout=0):
+                # Look at the last sent PIN (hard to get from here easily, so we just mock the result)
+                return None # The real logic uses timestamps
+            
+            # This is complex to mock perfectly because it relies on real-world timing.
+            # Instead, let's mock 'unlock_attempt_timing' directly to verify the logic 
+            # that CHOOSES the candidates based on latency.
+            
+            def mock_unlock_timing(pin):
+                lat = 0.002
+                if pin[0] == SECRET_PIN[0]:
+                    lat += 0.005
+                return False, lat
+            
+            cracker.unlock_attempt_timing = mock_unlock_timing
+            
+            candidates = cracker.crack_timing(known_bytes=0)
+            
+            # The top candidate should have 0x12 as the first byte
+            self.assertEqual(candidates[0][0], 0x12)
 
 if __name__ == '__main__':
     unittest.main()

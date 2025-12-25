@@ -1,0 +1,14 @@
+---
+- name: Verify
+  hosts: all
+  tasks:
+    - name: Run hardware simulation tests inside the container
+      command: /app/venv/bin/python3 -m pytest /app/tests/test_hardware_sim.py -s
+      environment:
+        PYTHONPATH: /app/src
+      register: test_result
+      failed_when: test_result.rc != 0
+    
+    - name: Display test output
+      debug:
+        var: test_result.stdout_lines

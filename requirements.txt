@@ -1,3 +1,6 @@
 python-can
 adafruit-circuitpython-ssd1306
 adafruit-blinka
+luma.oled
+luma.emulator
+pytest-image-diff

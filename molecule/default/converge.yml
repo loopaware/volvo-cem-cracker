@@ -1,0 +1,36 @@
+---
+- name: Converge
+  hosts: all
+  tasks:
+    - name: Install dependencies
+      apt:
+        name:
+          - python3
+          - python3-pip
+          - python3-venv
+          - python3-full
+          - iproute2
+          - kmod
+          - git
+        state: present
+        update_cache: yes
+
+    - name: Create app directory
+      file:
+        path: /app
+        state: directory
+
+    - name: Copy source code
+      copy:
+        src: ../../
+        dest: /app/
+
+    - name: Create Virtual Environment
+      command: python3 -m venv /app/venv
+      args:
+        creates: /app/venv/bin/activate
+
+    - name: Install python-can in venv
+      pip:
+        name: python-can
+        virtualenv: /app/venv
