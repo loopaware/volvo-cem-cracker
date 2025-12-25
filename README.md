@@ -79,3 +79,46 @@ And to avoid time waste, hardcode the first two bytes that you already know:
     crackPinPosition (pin, i, verbose);
   }
 ```
+
+# Raspberry Pi Port
+
+This project has been ported to run on a **Raspberry Pi Zero 2 W** equipped with a **Waveshare RS485 CAN HAT**.
+
+## Hardware Setup
+1.  **Raspberry Pi Zero 2 W** (or 3/4).
+2.  **Waveshare RS485 CAN HAT** (MCP2515 based).
+3.  **OLED Display** (SSD1306 128x64 I2C) - Optional, for status monitoring.
+4.  **OBD2 Cable** connected to CAN High/Low.
+
+## Software Architecture
+*   `volvo_cracker.py`: Main Python script port of the Arduino logic. Includes "Timing Attack" (experimental on Linux) and Brute Force modes.
+*   `oled_monitor.py`: Service to display status and IP address on the OLED.
+*   `deploy/`: Ansible playbooks for automated deployment.
+
+## Deployment (Ansible)
+You can deploy the software to a remote Raspberry Pi using Ansible.
+
+1.  Edit `deploy/inventory` to set your Pi's IP address and user.
+2.  Run the playbook:
+    ```bash
+    export ANSIBLE_HOST_KEY_CHECKING=False
+    ansible-playbook -i deploy/inventory deploy/playbook.yml
+    ```
+    *Note: Ensure you have SSH access to the Pi (e.g., via `ssh-copy-id`).*
+
+## Usage
+The software is installed as a systemd service (`volvo-cracker.service`) and starts automatically on boot.
+
+### Manual Run
+To run manually for debugging:
+```bash
+cd ~/volvo-cem-cracker
+./run.sh
+```
+
+### Logs
+Check the logs at:
+```bash
+tail -f ~/volvo-cem-cracker/crack.log
+```
+

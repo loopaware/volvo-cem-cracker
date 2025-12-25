@@ -1,0 +1,14 @@
+[Unit]
+Description=Volvo CEM Cracker
+After=network.target oled-monitor.service
+
+[Service]
+Type=simple
+User=root
+ExecStart=/home/uzanto/launch_cracker.sh
+Restart=no
+# We don't want it to restart forever if it fails, 
+# so you can SSH in to check errors.
+
+[Install]
+WantedBy=multi-user.target
