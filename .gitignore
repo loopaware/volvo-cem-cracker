@@ -3,8 +3,7 @@ __pycache__/
 *$py.class
 venv/
 .env
-*.log
-*.tmp
 session.json
 test_session.json
+config.json
 .DS_Store

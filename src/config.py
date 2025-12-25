@@ -1,0 +1,54 @@
+# --- CONFIGURATION & CONSTANTS ---
+
+REQ_ID = 0x000FFFFE  # Extended ID for requests
+CEM_HS_ID = 0x50     # High Speed CEM Node ID
+CEM_LS_ID = 0x40     # Low Speed CEM Node ID
+
+CMD_UNLOCK = 0xBE
+CMD_UNLOCK_REPLY = 0xB9
+
+# PIN Shuffling Patterns (from .ino)
+# Indexes into the raw PIN array [P0, P1, P2, P3, P4, P5]
+SHUFFLE_ORDERS = [
+    [0, 1, 2, 3, 4, 5],
+    [3, 1, 5, 0, 2, 4],
+    [5, 2, 1, 4, 0, 3],
+    [2, 4, 5, 0, 3, 1]
+]
+
+# Known CEM Configurations (P/N -> (Baud, ShuffleIndex))
+BAUD_500K = 500000
+BAUD_250K = 250000
+
+CEM_PARAMS = {
+    # P1
+    8690719: (BAUD_500K, 0), 8690720: (BAUD_500K, 0), 8690721: (BAUD_500K, 0),
+    8690722: (BAUD_500K, 0), 30765471: (BAUD_500K, 0), 30728906: (BAUD_500K, 0),
+    30765015: (BAUD_500K, 0), 31254317: (BAUD_500K, 0), 31327215: (BAUD_500K, 3),
+    31254749: (BAUD_500K, 3), 31254903: (BAUD_500K, 0), 31296881: (BAUD_500K, 3),
+    
+    # P2 CEM-B (Brick 1999-2004)
+    8645716: (BAUD_250K, 0), 8645719: (BAUD_250K, 0), 8688434: (BAUD_250K, 0),
+    8688436: (BAUD_250K, 0), 8688513: (BAUD_250K, 2), 30657629: (BAUD_250K, 0),
+    9494336: (BAUD_250K, 0), 9494594: (BAUD_250K, 0), 8645171: (BAUD_250K, 0),
+    9452553: (BAUD_250K, 0), 8645205: (BAUD_250K, 0), 9452596: (BAUD_250K, 0),
+    8602436: (BAUD_250K, 0), 9469809: (BAUD_250K, 0), 8645200: (BAUD_250K, 0),
+
+    # P2 CEM-L (L shaped 2005-2014)
+    30682981: (BAUD_500K, 1), 30682982: (BAUD_500K, 1), 30728356: (BAUD_500K, 1),
+    30728542: (BAUD_500K, 1), 30765149: (BAUD_500K, 1), 30765646: (BAUD_500K, 1),
+    30786475: (BAUD_500K, 1), 30786889: (BAUD_500K, 1), 31282457: (BAUD_500K, 1),
+    31314468: (BAUD_500K, 1), 31394158: (BAUD_500K, 1),
+
+    # P2 CEM-H (L shaped H marked 2005-2008)
+    30786476: (BAUD_500K, 1), 30728539: (BAUD_500K, 1), 30728357: (BAUD_500K, 1),
+    30765148: (BAUD_500K, 1), 30765643: (BAUD_500K, 1), 30795115: (BAUD_500K, 1),
+    31282455: (BAUD_500K, 1), 31394157: (BAUD_500K, 1), 30786579: (BAUD_500K, 1),
+    30786890: (BAUD_500K, 1) 
+}
+
+LOG_FILE = "crack.log"
+SESSION_FILE = "session.json"
+
+# Pre-calculate BCD table for 0-99
+BCD_TABLE = [((val // 10) << 4) | (val % 10) for val in range(100)]
