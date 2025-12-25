@@ -8,13 +8,13 @@ from unittest.mock import MagicMock, patch
 # Add src to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
 
-from volvo_cracker import VolvoCracker
+from cracker import VolvoCracker
 
 class TestResume(unittest.TestCase):
     def setUp(self):
         self.test_session_file = "test_session.json"
         # Patch the SESSION_FILE constant in the module
-        self.patcher = patch('volvo_cracker.SESSION_FILE', self.test_session_file)
+        self.patcher = patch('cracker.SESSION_FILE', self.test_session_file)
         self.patcher.start()
         
         self.cracker = VolvoCracker()

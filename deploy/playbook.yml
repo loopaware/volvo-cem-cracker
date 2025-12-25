@@ -40,8 +40,8 @@
         dest: "{{ app_dir }}/src/{{ item }}"
         mode: '0644'
       loop:
-        - volvo_cracker.py
-        - oled_monitor.py
+        - cracker.py
+        - monitor.py
 
     - name: Copy Documentation & Misc
       copy:
@@ -51,6 +51,13 @@
       loop:
         - README.md
         - crack.log
+        - requirements.txt
+
+    - name: Copy Runner Script
+      copy:
+        src: "../run.sh"
+        dest: "{{ app_dir }}/run.sh"
+        mode: '0755'
 
     - name: Ensure log file exists and is writable
       file:
@@ -66,15 +73,12 @@
     - name: Install Python Dependencies
       pip:
         virtualenv: "{{ venv_dir }}"
-        name:
-          - python-can
-          - adafruit-circuitpython-ssd1306
-          - adafruit-blinka
+        requirements: "{{ app_dir }}/requirements.txt"
         state: present
 
     - name: Copy Systemd Services
       copy:
-        src: "../services/{{ item }}"
+        src: "services/{{ item }}"
         dest: "/etc/systemd/system/{{ item }}"
         owner: root
         group: root

@@ -6,7 +6,7 @@ After=network.target
 Type=simple
 User=root
 # Ansible will replace __VENV_PYTHON__ and __APP_DIR__
-ExecStart=__VENV_PYTHON__ __APP_DIR__/src/oled_monitor.py
+ExecStart=__VENV_PYTHON__ __APP_DIR__/src/monitor.py
 WorkingDirectory=__APP_DIR__
 
 # Auto-restart if the script crashes

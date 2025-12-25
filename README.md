@@ -96,9 +96,9 @@ This project has been ported to run on a **Raspberry Pi Zero 2 W** equipped with
 4.  **OBD2 Cable** connected to CAN High/Low.
 
 ## Software Architecture
-*   `src/volvo_cracker.py`: Main Python script port of the Arduino logic.
-*   `src/oled_monitor.py`: Service to display status and IP address on the OLED.
-*   `services/`: Systemd unit files.
+*   `src/cracker.py`: Main Python script port of the Arduino logic.
+*   `src/monitor.py`: Service to display status and IP address on the OLED.
+*   `deploy/services/`: Systemd unit files.
 *   `deploy/`: Ansible playbooks for automated deployment.
 
 ## Deployment (Ansible)
