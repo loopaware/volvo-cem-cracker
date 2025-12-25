@@ -7,6 +7,49 @@ import random
 import sys
 import os
 import json
+import smtplib
+import threading
+import logging
+import logging.handlers
+
+# --- Email Notifier ---
+class EmailNotifier(threading.Thread):
+    def __init__(self, config, cracker_instance):
+        super().__init__()
+        self.config = config
+        self.cracker = cracker_instance
+        self.stop_event = threading.Event()
+        self.daemon = True
+
+    def send_email(self, subject, body):
+        if not all([self.config.get('smtp_server'), self.config.get('smtp_port'), self.config.get('username'), self.config.get('password'), self.config.get('recipient')]):
+            logging.warning("Email config incomplete. Skipping email notification.")
+            return
+
+        try:
+            server = smtplib.SMTP_SSL(self.config['smtp_server'], self.config['smtp_port'])
+            server.login(self.config['username'], self.config['password'])
+            
+            message = f"Subject: {subject}\n\n{body}"
+            server.sendmail(self.config['username'], self.config['recipient'], message)
+            server.quit()
+            logging.info(f"Email notification sent: {subject}")
+        except Exception as e:
+            logging.error(f"Failed to send email: {e}")
+
+    def run(self):
+        self.send_email("Volvo Cracker Status", "Cracking process started.")
+        
+        while not self.stop_event.wait(self.config.get('update_interval', 3600)):
+            # This is where you'd fetch the current status from the cracker
+            # For now, we'll just send a generic message.
+            status_message = "Cracking is in progress."
+            self.send_email("Volvo Cracker Status Update", status_message)
+            
+        self.send_email("Volvo Cracker Status", "Cracking process stopped.")
+
+    def stop(self):
+        self.stop_event.set()
 
 # --- CONFIGURATION & CONSTANTS ---
 
@@ -57,19 +100,37 @@ CEM_PARAMS = {
     30786890: (BAUD_500K, 1) 
 }
 
-LOG_FILE = "crack.log"
+LOG_FILE = os.getenv("LOG_FILE", "crack.log")
 SESSION_FILE = "session.json"
 
 # Pre-calculate BCD table for 0-99
 BCD_TABLE = [((val // 10) << 4) | (val % 10) for val in range(100)]
 
-def log(msg):
-    print(msg)
-    try:
-        with open(LOG_FILE, "a") as f:
-            f.write(msg + "\n")
-    except:
-        pass
+def setup_logging():
+    log_path = LOG_FILE
+    is_prod = log_path.startswith('/var/log')
+
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO)
+    
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    
+    # Use rotating file handler
+    handler = logging.handlers.RotatingFileHandler(
+        log_path, 
+        maxBytes=10*1024*1024, # 10MB
+        backupCount=5
+    )
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+    
+    # Also log to console for dev environments
+    if not is_prod:
+        stream_handler = logging.StreamHandler(sys.stdout)
+        stream_handler.setFormatter(formatter)
+        logger.addHandler(stream_handler)
+
+    logging.info("Logging initialized.")
 
 def bcd_to_bin(val):
     return ((val >> 4) * 10) + (val & 0x0F)
@@ -102,7 +163,7 @@ class VolvoCracker:
         if self.bus:
             self.bus.shutdown()
         
-        print(f"Initializing CAN on {self.channel} @ {bitrate}...")
+        logging.info(f"Initializing CAN on {self.channel} @ {bitrate}...")
         try:
             # Add filters to ignore noise
             filters = [
@@ -120,7 +181,7 @@ class VolvoCracker:
             self.baud = bitrate
             return True
         except Exception as e:
-            print(f"Error initializing CAN: {e}")
+            logging.error(f"Error initializing CAN: {e}")
             return False
 
     def send_msg(self, arbitration_id, data, is_extended=False):
@@ -130,7 +191,7 @@ class VolvoCracker:
             self.bus.send(msg)
             return time.time()
         except can.CanError as e:
-            print(f"Send Error: {e}")
+            logging.error(f"Send Error: {e}")
             return None
 
     def read_part_number(self):
@@ -141,7 +202,7 @@ class VolvoCracker:
         target_ids = [CEM_HS_ID, CEM_LS_ID]
         
         for tid in target_ids:
-            print(f"Attempting to read P/N from Node {hex(tid)}...")
+            logging.info(f"Attempting to read P/N from Node {hex(tid)}...")
             req = [0xCB, tid, 0xB9, 0xF0, 0x00, 0x00, 0x00, 0x00]
             
             for _ in range(3):
@@ -175,7 +236,7 @@ class VolvoCracker:
                         pn = (pn * 100) + bcd_to_bin(f0[7])
                         pn = (pn * 100) + bcd_to_bin(f1[1])
                         
-                        print(f"Found Part Number: {pn}")
+                        logging.info(f"Found Part Number: {pn}")
                         return pn
         return None
 
@@ -184,10 +245,10 @@ class VolvoCracker:
             baud, shuff_idx = CEM_PARAMS[pn]
             self.baud = baud
             self.shuffle = SHUFFLE_ORDERS[shuff_idx]
-            print(f"CEM Configuration: Baud={baud}, Shuffle Index={shuff_idx}")
+            logging.info(f"CEM Configuration: Baud={baud}, Shuffle Index={shuff_idx}")
             return True
         else:
-            print(f"Unknown CEM Part Number: {pn}. Defaulting to P1 settings (500k, Shuffle 0).")
+            logging.warning(f"Unknown CEM Part Number: {pn}. Defaulting to P1 settings (500k, Shuffle 0).")
             self.baud = 500000
             self.shuffle = SHUFFLE_ORDERS[0]
             return False
@@ -197,10 +258,10 @@ class VolvoCracker:
         Verifies CAN connection and CEM responsiveness.
         Returns: True if ready, False if failure.
         """
-        log("Checking CAN connection...")
+        logging.info("Checking CAN connection...")
         
         # 1. Check for Bus Activity (Listen Only)
-        log("Listening for traffic (2s)...")
+        logging.info("Listening for traffic (2s)...")
         start = time.time()
         pkt_count = 0
         while time.time() - start < 2.0:
@@ -208,19 +269,19 @@ class VolvoCracker:
             if msg: pkt_count += 1
             
         if pkt_count == 0:
-            log("ERROR: No traffic on CAN Bus! Check cables/ignition.")
+            logging.error("No traffic on CAN Bus! Check cables/ignition.")
             return False
         else:
-            log(f"Traffic detected ({pkt_count} msgs). Bus is active.")
+            logging.info(f"Traffic detected ({pkt_count} msgs). Bus is active.")
             
         # 2. Ping CEM
-        log("Pinging CEM...")
+        logging.info("Pinging CEM...")
         # Try to read P/N as a ping
         if self.read_part_number():
-            log("CEM is responsive.")
+            logging.info("CEM is responsive.")
             return True
         
-        log("ERROR: Traffic seen, but CEM did not respond to queries.")
+        logging.error("Traffic seen, but CEM did not respond to queries.")
         return False
 
     def unlock_attempt_fast(self, pin_bytes):
@@ -297,7 +358,7 @@ class VolvoCracker:
         Attempt to find the first few bytes using timing analysis.
         Returns a list of candidate PINs (top probable prefixes).
         """
-        log(f"Starting Timing Attack...")
+        logging.info(f"Starting Timing Attack...")
         
         # We want to find bytes 0, 1, 2.
         # Instead of greedy best-first, we keep top N at each stage.
@@ -306,7 +367,7 @@ class VolvoCracker:
         candidates = [[0]*6] 
         
         for pos in range(known_bytes, 3):
-            log(f"Analyzing PIN byte {pos} for {len(candidates)} branches...")
+            logging.info(f"Analyzing PIN byte {pos} for {len(candidates)} branches...")
             next_stage_candidates = []
             
             for base_pin in candidates:
@@ -329,7 +390,7 @@ class VolvoCracker:
                         
                         suc, lat = self.unlock_attempt_timing(current_pin)
                         if suc:
-                            log(f"!!! ACCIDENTAL SUCCESS !!! PIN: {current_pin}")
+                            logging.info(f"!!! ACCIDENTAL SUCCESS !!! PIN: {current_pin}")
                             return [current_pin]
                         
                         if lat > 0:
@@ -344,7 +405,7 @@ class VolvoCracker:
                 
                 # Keep top 3 for this branch
                 top_n = sorted_candidates[:3]
-                log(f"Top 3 for prefix {base_pin[:pos]}+: {[hex(x[0]) for x in top_n]}")
+                logging.info(f"Top 3 for prefix {base_pin[:pos]}+: {[hex(x[0]) for x in top_n]}")
                 
                 for byte_val, lat in top_n:
                     new_pin = list(base_pin)
@@ -365,7 +426,7 @@ class VolvoCracker:
             if len(candidates) > 5:
                 candidates = candidates[:5] # Prune to top 5 breadth
         
-        log(f"Timing Attack Complete. Generated {len(candidates)} candidates.")
+        logging.info(f"Timing Attack Complete. Generated {len(candidates)} candidates.")
         return candidates
 
     def save_session(self, index, fixed_bytes, candidates_queue=None):
@@ -408,7 +469,7 @@ class VolvoCracker:
         return False
 
     def brute_force(self, start_pin, start_index=0, candidates_queue=None):
-        log(f"Starting Brute Force from index {start_index}...")
+        logging.info(f"Starting Brute Force from index {start_index}...")
         
         current_pin = list(start_pin)
         total = 1000000
@@ -420,11 +481,11 @@ class VolvoCracker:
             # In a real Swedish winter, cranking can drop voltage.
             # We check a mock file or GPIO to simulate this.
             if self.check_power_sag():
-                log("!!! VOLTAGE SAG DETECTED !!! Pausing for safety...")
+                logging.warning("!!! VOLTAGE SAG DETECTED !!! Pausing for safety...")
                 self.save_session(i, start_pin, candidates_queue)
                 while self.check_power_sag():
                     time.sleep(1)
-                log("Power stabilized. Resuming...")
+                logging.info("Power stabilized. Resuming...")
                 start_t = time.time() # Reset rate calc
 
             # Optimized iteration
@@ -441,11 +502,11 @@ class VolvoCracker:
                 rate = (i - start_index) / elapsed if elapsed > 0 else 0
                 remaining = total - i
                 eta = remaining / rate if rate > 0 else 0
-                log(f"Progress: {i}/{total} ({i/total*100:.1f}%) Rate: {rate:.1f}/s ETA: {eta/60:.1f}m - PIN: {current_pin}")
+                logging.info(f"Progress: {i}/{total} ({i/total*100:.1f}%) Rate: {rate:.1f}/s ETA: {eta/60:.1f}m - PIN: {current_pin}")
                 self.save_session(i, start_pin, candidates_queue)
             
             if self.unlock_attempt_fast(current_pin):
-                log(f"\n!!! FOUND PIN: {current_pin} !!!")
+                logging.info(f"\n!!! FOUND PIN: {current_pin} !!!")
                 if os.path.exists(SESSION_FILE): os.remove(SESSION_FILE)
                 return current_pin
                 
@@ -458,17 +519,37 @@ class VolvoCracker:
         except:
             pass
 
-        log("--- Volvo CEM Cracker (Pi Port Optimized) ---")
+        setup_logging()
+        logging.info("--- Volvo CEM Cracker (Pi Port Optimized) ---")
+
+        # Load Config
+        config = {}
+        try:
+            with open("config.json", "r") as f:
+                config = json.load(f)
+        except FileNotFoundError:
+            logging.warning("config.json not found. Email notifications disabled.")
+        except json.JSONDecodeError:
+            logging.error("Error decoding config.json. Email notifications disabled.")
+
+        # Start Email Notifier
+        email_notifier = None
+        if config.get("email_notifications_enabled"):
+            email_notifier = EmailNotifier(config.get("email_settings", {}), self)
+            email_notifier.start()
+
         if not self.setup_can(500000):
+            if email_notifier: email_notifier.stop()
             return
             
         if not self.check_connection():
-            log("Aborting due to connectivity failure.")
+            logging.error("Aborting due to connectivity failure.")
+            if email_notifier: email_notifier.stop()
             return
 
         pn = self.read_part_number()
         if pn: self.configure_for_cem(pn)
-        else: log("Using Defaults.")
+        else: logging.warning("Using Defaults.")
         
         resume_index, resume_fixed_bytes, candidates_queue = self.load_session()
         
@@ -478,16 +559,20 @@ class VolvoCracker:
         if resume_index is not None:
             # If previous session was mid-way
             if resume_index < 1000000:
-                log(f"Resuming previous candidate from index {resume_index}...")
+                logging.info(f"Resuming previous candidate from index {resume_index}...")
                 current_fixed = [int(x) for x in resume_fixed_bytes]
                 final_pin = self.brute_force(current_fixed, start_index=resume_index, candidates_queue=candidates_queue)
-                if final_pin: return
+                if final_pin:
+                    if email_notifier:
+                        email_notifier.send_email("PIN Found!", f"The PIN is: {final_pin}")
+                        email_notifier.stop()
+                    return
             else:
-                log("Previous candidate finished. Moving to next...")
+                logging.info("Previous candidate finished. Moving to next...")
         
         # Process Queue
         if not candidates_queue and current_fixed is None:
-            log("Generating new candidates via Timing Attack...")
+            logging.info("Generating new candidates via Timing Attack...")
             candidates_queue = self.crack_timing(known_bytes=0)
             if not candidates_queue:
                 candidates_queue = [[0]*6] # Fallback
@@ -497,14 +582,18 @@ class VolvoCracker:
             candidate = candidates_queue.pop(0)
             candidate = [int(x) for x in candidate]
             
-            log(f"Processing Candidate Prefix: {candidate[:3]}")
+            logging.info(f"Processing Candidate Prefix: {candidate[:3]}")
             self.save_session(0, candidate, candidates_queue) # Save state before start
             
             final_pin = self.brute_force(candidate, start_index=0, candidates_queue=candidates_queue)
             if final_pin:
+                if email_notifier:
+                    email_notifier.send_email("PIN Found!", f"The PIN is: {final_pin}")
+                    email_notifier.stop()
                 return
         
-        log("All candidates exhausted. No PIN found.")
+        logging.info("All candidates exhausted. No PIN found.")
+        if email_notifier: email_notifier.stop()
 
 if __name__ == "__main__":
     VolvoCracker().run()

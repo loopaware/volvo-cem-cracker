@@ -1,0 +1,11 @@
+{
+    "email_notifications_enabled": true,
+    "email_settings": {
+        "smtp_server": "smtp.gmail.com",
+        "smtp_port": 465,
+        "username": "your_email@gmail.com",
+        "password": "your_app_password",
+        "recipient": "recipient_email@example.com",
+        "update_interval": 3600
+    }
+}

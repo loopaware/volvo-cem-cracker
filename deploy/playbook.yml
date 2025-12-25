@@ -34,6 +34,15 @@
         state: directory
         mode: '0755'
 
+    - name: Ensure Log Directory Exists
+      file:
+        path: /var/log/volvo-cracker
+        state: directory
+        mode: '0755'
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+      become: yes
+
     - name: Copy Source Files
       copy:
         src: "../src/{{ item }}"
@@ -50,20 +59,21 @@
         mode: '0644'
       loop:
         - README.md
-        - crack.log
         - requirements.txt
 
-    - name: Copy Runner Script
+    - name: Copy Config Template
       copy:
-        src: "../run.sh"
-        dest: "{{ app_dir }}/run.sh"
-        mode: '0755'
+        src: ../config.json.template
+        dest: "{{ app_dir }}/config.json"
+        mode: '0644'
+        force: no
 
     - name: Ensure log file exists and is writable
       file:
-        path: "{{ app_dir }}/crack.log"
+        path: /var/log/volvo-cracker/cracker.log
         state: touch
         mode: '0666'
+      become: yes
 
     - name: Create Python Virtual Environment
       command: python3 -m venv --system-site-packages {{ venv_dir }}
