@@ -1,9 +1,12 @@
-# Plan: Resume Functionality
+# Plan: Resume Functionality (Completed)
 
 ## Objective
 Implement persistent state saving to allow the cracker to resume after power loss or interruption.
 
-## Requirements
+## Status
+**COMPLETED** - Implemented in `src/volvo_cracker.py`.
+
+## Requirements (Implemented)
 1.  **Persistence**: Save current progress to a file (`session.json`).
 2.  **Safety**: Upon resume, "rewind" a safe number of attempts (e.g., 500) to account for potential uncommitted writes or interruption timing.
 3.  **Efficiency**: Do not write to disk on every attempt. Write periodically (e.g., every 100 attempts).
@@ -36,7 +39,6 @@ Implement persistent state saving to allow the cracker to resume after power los
 *   This ensures we re-try the last few seconds of work.
 
 ## Verification
-*   Deploy to Pi.
-*   Start cracker.
-*   Interrupt (Ctrl+C or kill).
-*   Restart and verify it picks up near where it left off.
+*   [x] Implemented logic.
+*   [ ] Verify with mock test.
+*   [ ] Deploy to Pi.
