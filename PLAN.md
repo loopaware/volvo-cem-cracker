@@ -1,8 +1,9 @@
-2025-12-25 11:11:30
-## Objective: Implement robust testing infrastructure for hardware logic and CAN state machine.
+2025-12-25 11:47:33
+## Objective: Create a full-stack local hardware simulation and testing suite using FOSS tools.
 
 ## Tasks:
-* [x] Add unit tests for BCD and CEM configuration logic.
-* [x] Implement a Mock CAN bus for verifying the cracker state machine.
-* [x] Add integration-style tests using Virtual CAN (vcan0) simulator. (Used Python mocks for better reliability).
-* [x] Verify all tests pass in the current environment.
+* [ ] Initialize pytest-based testing framework.
+* [ ] Create 'src/sim_cem.py' - A standalone Volvo CEM simulator for vcan.
+* [ ] Implement Molecule/Ansible testing for the Pi deployment in a containerized environment.
+* [ ] Add timing-attack simulation and verification tests.
+* [ ] Create a 'docker-compose.yml' for one-command local integration testing.

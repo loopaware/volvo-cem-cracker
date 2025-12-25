@@ -1,0 +1,29 @@
+services:
+  # The Volvo CEM Simulator
+  cem-sim:
+    image: python:3.11-slim
+    container_name: cem-sim
+    volumes:
+      - .:/app
+    working_dir: /app
+    network_mode: host
+    privileged: true
+    command: >
+      bash -c "pip install python-can &&
+               python3 src/sim_cem.py --channel vcan0 --pin 123456789012"
+
+  # The Cracker
+  cracker:
+    image: python:3.11-slim
+    container_name: cracker
+    depends_on:
+      - cem-sim
+    volumes:
+      - .:/app
+    working_dir: /app
+    network_mode: host
+    privileged: true
+    command: >
+      bash -c "pip install python-can &&
+               sleep 5 &&
+               python3 src/cracker.py"
