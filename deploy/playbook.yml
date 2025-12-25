@@ -1,19 +1,17 @@
 ---
 - name: Deploy Volvo CEM Cracker to Pi Zero
   hosts: pizeros
-  become: yes
+  become: no
   vars:
     app_dir: "/home/{{ ansible_user }}/volvo-cem-cracker"
     venv_dir: "{{ app_dir }}/venv"
-    # Waveshare CAN HAT usually uses 12MHz or 8MHz crystal. 
-    # Standard Waveshare RS485 CAN HAT is 12MHz, some clones are 8MHz.
-    # We will assume 12MHz for now or let the user configure /boot/config.txt manually if complex.
     
   tasks:
     - name: Update apt cache
       apt:
         update_cache: yes
         cache_valid_time: 3600
+      become: yes
 
     - name: Install system dependencies
       apt:
@@ -25,114 +23,119 @@
           - can-utils
           - i2c-tools
           - libgpiod-dev
+          - python3-rpi.gpio
+          - python3-pil
         state: present
+      become: yes
 
     - name: Ensure Application Directory Exists
       file:
-        path: "{{ app_dir }}"
+        path: "{{ app_dir }}/src"
         state: directory
-        owner: "{{ ansible_user }}"
-        group: "{{ ansible_user }}"
         mode: '0755'
 
-    - name: Copy Application Files
+    - name: Copy Source Files
       copy:
-        src: "../{{ item }}"
-        dest: "{{ app_dir }}/{{ item }}"
-        owner: "{{ ansible_user }}"
-        group: "{{ ansible_user }}"
+        src: "../src/{{ item }}"
+        dest: "{{ app_dir }}/src/{{ item }}"
         mode: '0644'
       loop:
         - volvo_cracker.py
         - oled_monitor.py
+
+    - name: Copy Documentation & Misc
+      copy:
+        src: "../{{ item }}"
+        dest: "{{ app_dir }}/{{ item }}"
+        mode: '0644'
+      loop:
         - README.md
         - crack.log
-        - crack_p1.py
+
+    - name: Copy Legacy Scripts
+      copy:
+        src: "../scripts"
+        dest: "{{ app_dir }}/"
+        mode: '0755'
 
     - name: Ensure log file exists and is writable
       file:
         path: "{{ app_dir }}/crack.log"
         state: touch
-        owner: "{{ ansible_user }}"
-        group: "{{ ansible_user }}"
         mode: '0666'
 
     - name: Create Python Virtual Environment
-      command: python3 -m venv {{ venv_dir }}
+      command: python3 -m venv --system-site-packages {{ venv_dir }}
       args:
         creates: "{{ venv_dir }}/bin/activate"
-      become_user: "{{ ansible_user }}"
 
     - name: Install Python Dependencies
       pip:
         virtualenv: "{{ venv_dir }}"
         name:
           - python-can
-          - RPi.GPIO
           - adafruit-circuitpython-ssd1306
           - adafruit-blinka
-          - pillow
+          # RPi.GPIO and pillow are provided by system
         state: present
-      become_user: "{{ ansible_user }}"
 
-    - name: Copy Systemd Service
+    - name: Copy Systemd Services
       copy:
-        src: "../volvo-cracker.service"
-        dest: "/etc/systemd/system/volvo-cracker.service"
+        src: "../services/{{ item }}"
+        dest: "/etc/systemd/system/{{ item }}"
         owner: root
         group: root
         mode: '0644'
+      loop:
+        - volvo-cracker.service
+        - oled-monitor.service
+      become: yes
 
-    - name: Copy OLED Monitor Service
-      copy:
-        src: "../oled-monitor.service"
-        dest: "/etc/systemd/system/oled-monitor.service"
-        owner: root
-        group: root
-        mode: '0644'
-
-    - name: Update Main Service ExecStart
+    - name: Configure Service Paths (volvo-cracker)
       replace:
         path: "/etc/systemd/system/volvo-cracker.service"
-        regexp: 'ExecStart=.*'
-        replace: 'ExecStart={{ venv_dir }}/bin/python3 {{ app_dir }}/volvo_cracker.py'
+        regexp: "{{ item.regexp }}"
+        replace: "{{ item.replace }}"
+      loop:
+        - { regexp: '__VENV_PYTHON__', replace: '{{ venv_dir }}/bin/python3' }
+        - { regexp: '__APP_DIR__', replace: '{{ app_dir }}' }
+      become: yes
 
-    - name: Update OLED Service ExecStart
+    - name: Configure Service Paths (oled-monitor)
       replace:
         path: "/etc/systemd/system/oled-monitor.service"
-        regexp: 'ExecStart=.*'
-        replace: 'ExecStart={{ venv_dir }}/bin/python3 {{ app_dir }}/oled_monitor.py'
-
-    - name: Update OLED Service WorkingDirectory
-      replace:
-        path: "/etc/systemd/system/oled-monitor.service"
-        regexp: 'WorkingDirectory=.*'
-        replace: 'WorkingDirectory={{ app_dir }}'
+        regexp: "{{ item.regexp }}"
+        replace: "{{ item.replace }}"
+      loop:
+        - { regexp: '__VENV_PYTHON__', replace: '{{ venv_dir }}/bin/python3' }
+        - { regexp: '__APP_DIR__', replace: '{{ app_dir }}' }
+      become: yes
 
     - name: Reload Systemd
       systemd:
         daemon_reload: yes
+      become: yes
 
     - name: Enable and Start OLED Monitor
       systemd:
         name: oled-monitor
         enabled: yes
         state: restarted
+      become: yes
 
     - name: Enable and Start Volvo Cracker Service
       systemd:
         name: volvo-cracker
         enabled: yes
         state: restarted
+      become: yes
 
-    - name: Create Launch Wrapper (Optional, for manual testing)
+    - name: Create Launch Wrapper
       copy:
         dest: "{{ app_dir }}/run.sh"
         content: |
           #!/bin/bash
           cd {{ app_dir }}
           source venv/bin/activate
-          python3 volvo_cracker.py
+          python3 src/volvo_cracker.py
         mode: '0755'
-        owner: "{{ ansible_user }}"
-        group: "{{ ansible_user }}"

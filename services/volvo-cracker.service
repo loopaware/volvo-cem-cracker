@@ -1,0 +1,14 @@
+[Unit]
+Description=Volvo CEM Cracker
+After=network.target oled-monitor.service
+
+[Service]
+Type=simple
+User=root
+# Ansible will replace __VENV_PYTHON__ and __APP_DIR__
+ExecStart=__VENV_PYTHON__ __APP_DIR__/src/volvo_cracker.py
+WorkingDirectory=__APP_DIR__
+Restart=no
+
+[Install]
+WantedBy=multi-user.target

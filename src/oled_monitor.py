@@ -22,8 +22,8 @@ image = Image.new("1", (width, height))
 draw = ImageDraw.Draw(image)
 font = ImageFont.load_default()
 
-#LOG_FILE = "volvo-cem-cracker/crack.log"
-LOG_FILE = "/home/uzanto/volvo-cem-cracker/crack.log"
+# Use local log file, assuming WorkingDirectory is set correctly
+LOG_FILE = "crack.log"
 
 def get_ip():
     try:
