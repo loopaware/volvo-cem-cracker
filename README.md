@@ -84,6 +84,11 @@ And to avoid time waste, hardcode the first two bytes that you already know:
 
 This project has been ported to run on a **Raspberry Pi Zero 2 W** equipped with a **Waveshare RS485 CAN HAT**.
 
+## Features
+*   **Resume Capability**: Automatically saves progress to `session.json`. If power is lost or the process is interrupted, it resumes from the last saved point (with a safety rewind of 500 attempts) upon restart.
+*   **Performance**: Optimized for Python on Pi (Zero 2 W), reaching ~120 attempts/s using the `python-can` library and kernel filtering.
+*   **OLED Status**: Shows IP address, current progress, and the found PIN on an attached SSD1306 display.
+
 ## Hardware Setup
 1.  **Raspberry Pi Zero 2 W** (or 3/4).
 2.  **Waveshare RS485 CAN HAT** (MCP2515 based).
