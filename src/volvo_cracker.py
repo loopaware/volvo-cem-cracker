@@ -192,6 +192,37 @@ class VolvoCracker:
             self.shuffle = SHUFFLE_ORDERS[0]
             return False
 
+    def check_connection(self):
+        """
+        Verifies CAN connection and CEM responsiveness.
+        Returns: True if ready, False if failure.
+        """
+        log("Checking CAN connection...")
+        
+        # 1. Check for Bus Activity (Listen Only)
+        log("Listening for traffic (2s)...")
+        start = time.time()
+        pkt_count = 0
+        while time.time() - start < 2.0:
+            msg = self.bus.recv(timeout=0.1)
+            if msg: pkt_count += 1
+            
+        if pkt_count == 0:
+            log("ERROR: No traffic on CAN Bus! Check cables/ignition.")
+            return False
+        else:
+            log(f"Traffic detected ({pkt_count} msgs). Bus is active.")
+            
+        # 2. Ping CEM
+        log("Pinging CEM...")
+        # Try to read P/N as a ping
+        if self.read_part_number():
+            log("CEM is responsive.")
+            return True
+        
+        log("ERROR: Traffic seen, but CEM did not respond to queries.")
+        return False
+
     def unlock_attempt_fast(self, pin_bytes):
         """
         Optimized unlock attempt for Brute Force.
@@ -203,8 +234,6 @@ class VolvoCracker:
         d[1] = CMD_UNLOCK
         
         # Apply shuffle
-        # Unroll loop for speed? 6 iters is small but Python overhead is high.
-        # shuffle is a list, e.g. [0, 1, 2, 3, 4, 5]
         s = self.shuffle
         d[2 + s[0]] = pin_bytes[0]
         d[2 + s[1]] = pin_bytes[1]
@@ -213,21 +242,14 @@ class VolvoCracker:
         d[2 + s[4]] = pin_bytes[4]
         d[2 + s[5]] = pin_bytes[5]
         
-        # Drain buffer? No, relying on filters to keep it clean.
-        # If we drain every time, we waste time. 
-        # But if we don't drain, we might read an old message.
-        # Since we are request-response, the buffer should be empty unless we timed out previously.
-        # Compromise: Drain only if we suspect debris? 
-        # For max speed, we assume sync.
-        
         try:
             self.bus.send(self.tx_msg)
         except can.CanError:
             return False
 
         # Wait for reply
-        # Reduced timeout to 10ms (0.01)
-        msg = self.bus.recv(timeout=0.01)
+        # Increased timeout to 20ms to be safer
+        msg = self.bus.recv(timeout=0.02)
         
         if msg:
             # Filters ensure we only get relevant IDs. Check content.
@@ -388,27 +410,56 @@ class VolvoCracker:
         return None
 
     def run(self):
-        print("--- Volvo CEM Cracker (Pi Port Optimized) ---")
+        log("--- Volvo CEM Cracker (Pi Port Optimized) ---")
         if not self.setup_can(500000):
             return
             
+        # 0. Connectivity Check
+        if not self.check_connection():
+            log("Aborting due to connectivity failure.")
+            return
+
         pn = self.read_part_number()
         if pn: self.configure_for_cem(pn)
-        else: print("Using Defaults.")
+        else: log("Using Defaults.")
         
         resume_index, resume_fixed_bytes = self.load_session()
         
-        if resume_index is not None:
-            print("Resuming...")
-            partial_pin = [int(x) for x in resume_fixed_bytes]
-            start_idx = resume_index
-            self.brute_force(partial_pin, start_index=start_idx)
-        else:
-            print("New Session.")
-            partial_pin = self.crack_timing(known_bytes=0) or [0]*6
-            self.brute_force(partial_pin, start_index=0)
+        start_fresh = True
         
-        print("Done.")
+        if resume_index is not None:
+            # Check if session is "finished" (i.e. index >= total)
+            if resume_index >= 1000000:
+                 log("Previous session finished without success.")
+                 # Maybe we should restart from scratch?
+                 log("Starting FRESH session.")
+                 if os.path.exists(SESSION_FILE): os.remove(SESSION_FILE)
+            else:
+                log(f"Resuming from index {resume_index}...")
+                partial_pin = [int(x) for x in resume_fixed_bytes]
+                start_idx = resume_index
+                start_fresh = False
+                
+                final_pin = self.brute_force(partial_pin, start_index=start_idx)
+                if final_pin:
+                    log("Done.")
+                    return
+        
+        if start_fresh:
+            log("New Session.")
+            partial_pin = self.crack_timing(known_bytes=0)
+            
+            if partial_pin:
+                 log(f"Timing Attack Suggested: {partial_pin}")
+            else:
+                 log("Timing Attack Failed/Skipped. Defaulting to 00 00 00...")
+                 partial_pin = [0]*6
+                 
+            final_pin = self.brute_force(partial_pin, start_index=0)
+            if final_pin:
+                log("Done.")
+            else:
+                log("Finished range. No PIN found.")
 
 if __name__ == "__main__":
     VolvoCracker().run()

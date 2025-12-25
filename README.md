@@ -22,13 +22,13 @@ Find us at Matthew's Volvo Site for support: https://www.matthewsvolvosite.com/f
 
 Big thanks to an unidentified hacker from western Germany for hints!
 
-![Image](doc/schematic.png)
+![Image](docs/images/schematic.png)
 
 An optional LCD display can be added for stand-alone operation.
 
-![Image](doc/schematic_LCD.png)
+![Image](docs/images/schematic_LCD.png)
 
-![Image](doc/pin.png)
+![Image](docs/images/pin.png)
 
 Cracking CEM pin in about 10 minutes (video):
 

@@ -52,12 +52,6 @@
         - README.md
         - crack.log
 
-    - name: Copy Legacy Scripts
-      copy:
-        src: "../scripts"
-        dest: "{{ app_dir }}/"
-        mode: '0755'
-
     - name: Ensure log file exists and is writable
       file:
         path: "{{ app_dir }}/crack.log"
