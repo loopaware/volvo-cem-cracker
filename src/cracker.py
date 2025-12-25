@@ -113,7 +113,7 @@ class VolvoCracker:
             
             self.bus = can.interface.Bus(
                 channel=self.channel, 
-                bustype='socketcan',
+                interface='socketcan',
                 bitrate=bitrate,
                 can_filters=filters
             )
