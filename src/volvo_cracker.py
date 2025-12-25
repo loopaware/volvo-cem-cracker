@@ -6,6 +6,7 @@ import math
 import random
 import sys
 import os
+import json
 
 # --- CONFIGURATION & CONSTANTS ---
 
@@ -59,6 +60,7 @@ CEM_PARAMS = {
 }
 
 LOG_FILE = "crack.log"
+SESSION_FILE = "session.json"
 
 def log(msg):
     print(msg)
@@ -83,6 +85,48 @@ class VolvoCracker:
         self.baud = 500000
         self.shuffle = SHUFFLE_ORDERS[0]
         self.cem_id = CEM_HS_ID # Default to High Speed
+
+    def save_session(self, index, fixed_bytes):
+        """Saves current brute force index and config to disk."""
+        try:
+            state = {
+                "timestamp": time.time(),
+                "index": index,
+                "fixed_bytes": fixed_bytes
+            }
+            # Write to temp file then atomic move to prevent corruption
+            tmp_file = SESSION_FILE + ".tmp"
+            with open(tmp_file, "w") as f:
+                json.dump(state, f)
+            os.replace(tmp_file, SESSION_FILE)
+        except Exception as e:
+            log(f"Warning: Failed to save session: {e}")
+
+    def load_session(self):
+        """
+        Loads saved session. 
+        Returns (index, fixed_bytes) or (None, None).
+        Rewinds index by safe margin.
+        """
+        if not os.path.exists(SESSION_FILE):
+            return None, None
+        
+        try:
+            with open(SESSION_FILE, "r") as f:
+                state = json.load(f)
+            
+            idx = state.get("index", 0)
+            fixed = state.get("fixed_bytes", [0]*6)
+            
+            # REWIND SAFETY MARGIN
+            # Rewind 500 attempts to cover power loss buffering
+            safe_idx = max(0, idx - 500)
+            
+            log(f"Session found! Resuming from index {safe_idx} (was {idx}).")
+            return safe_idx, fixed
+        except Exception as e:
+            log(f"Error loading session: {e}")
+            return None, None
 
     def setup_can(self, bitrate):
         if self.bus:
@@ -344,25 +388,13 @@ class VolvoCracker:
 
         return current_pin
 
-    def brute_force(self, start_pin):
+    def brute_force(self, start_pin, start_index=0):
         """
         Brute forces the remaining bytes.
-        start_pin: 6-byte array with solved bytes filled, others 0.
-        We assume bytes 0,1,2 are solved, 3,4,5 need forcing?
-        Or generally, just iterate from where we left off.
+        start_pin: 6-byte array with fixed bytes filled.
+        start_index: Integer index to start iterating from (0 to 999999).
         """
-        log("Starting Brute Force...")
-        
-        # Determine which bytes to iterate.
-        # We'll assume the user wants to brute force the last N bytes or 
-        # we iterate the whole space if start_pin is all 0.
-        
-        # For safety/simplicity on this slow platform, we'll iterate 
-        # the last 3 bytes (1,000,000 combinations) if first 3 are fixed.
-        # If not, it's 100^6 (too big).
-        
-        # Convert fixed part to integer base
-        # This implementation assumes we are iterating the LAST 3 bytes.
+        log(f"Starting Brute Force from index {start_index}...")
         
         fixed_part_str = f"{bcd_to_bin(start_pin[0]):02d}{bcd_to_bin(start_pin[1]):02d}{bcd_to_bin(start_pin[2]):02d}"
         log(f"Fixed Prefix: {fixed_part_str} XX XX XX")
@@ -372,13 +404,7 @@ class VolvoCracker:
         
         start_t = time.time()
         
-        for i in range(total):
-            # i is 0 to 999999.
-            # Convert to BCD bytes
-            # s = f"{i:06d}" # e.g. "001234"
-            # But wait, each byte is 00-99. 
-            # So 3 bytes is 00-99, 00-99, 00-99.
-            
+        for i in range(start_index, total):
             # Optimized iteration
             b3 = bin_to_bcd((i // 10000) % 100)
             b4 = bin_to_bcd((i // 100) % 100)
@@ -389,15 +415,24 @@ class VolvoCracker:
             current_pin[4] = b4
             current_pin[5] = b5
             
-            if i % 1000 == 0:
+            if i % 100 == 0:
                 elapsed = time.time() - start_t
-                rate = i / elapsed if elapsed > 0 else 0
-                eta = (total - i) / rate if rate > 0 else 0
+                # Calculate real rate based on session start, not total time
+                rate = (i - start_index) / elapsed if elapsed > 0 else 0
+                remaining = total - i
+                eta = remaining / rate if rate > 0 else 0
+                
                 log(f"Progress: {i}/{total} ({i/total*100:.1f}%) Rate: {rate:.1f}/s ETA: {eta/60:.1f}m - Trying: {current_pin}")
+                
+                # Save Progress
+                self.save_session(i, start_pin)
             
             suc, _ = self.unlock_attempt(current_pin)
             if suc:
                 log(f"\n!!! FOUND PIN: {current_pin} !!!")
+                # Remove session file on success
+                if os.path.exists(SESSION_FILE):
+                    os.remove(SESSION_FILE)
                 return current_pin
                 
         return None
@@ -417,38 +452,35 @@ class VolvoCracker:
         else:
             log("Could not detect CEM Part Number. Using Defaults.")
         
-        # 3. Strategy
-        # Try timing attack for first 3 bytes?
-        # On Pi, this is risky.
-        log("Starting Cracking Sequence.")
+        # 3. Check for Resume
+        resume_index, resume_fixed_bytes = self.load_session()
         
-        # partial_pin = self.crack_timing(known_bytes=0)
-        # if not partial_pin:
-        #    partial_pin = [0,0,0,0,0,0]
-        
-        # FAIL-SAFE: The timing attack on Pi is likely garbage. 
-        # For this first version, I will default to a range scan or mock behavior
-        # unless I can verify it works.
-        # But per requirements "Port functionality", I included it.
-        # Let's try to run it.
-        
-        partial_pin = [0,0,0,0,0,0]
-        
-        # Prompt or Default?
-        # Since this is headless service usually, we default to:
-        # Try finding 3 bytes via timing, then brute force rest.
-        
-        found_timing = self.crack_timing(known_bytes=0)
-        
-        if found_timing:
-            log(f"Timing Attack result: {found_timing}")
-            partial_pin = found_timing
+        if resume_index is not None:
+            log("Resuming previous session...")
+            partial_pin = resume_fixed_bytes
+            start_idx = resume_index
+            
+            # Re-configure PIN if fixed bytes were saved as integers (JSON lists)
+            # Ensure they are ints
+            partial_pin = [int(x) for x in partial_pin]
+            
+            final_pin = self.brute_force(partial_pin, start_index=start_idx)
+            
         else:
-            log("Timing attack yielded no clear results. Starting from 00 00 00...")
-        
-        # 4. Brute Force the rest
-        # We assume timing gave us bytes 0,1,2.
-        final_pin = self.brute_force(partial_pin)
+            # New Session
+            log("Starting Cracking Sequence.")
+            
+            found_timing = self.crack_timing(known_bytes=0)
+            
+            if found_timing:
+                log(f"Timing Attack result: {found_timing}")
+                partial_pin = found_timing
+            else:
+                log("Timing attack yielded no clear results. Starting from 00 00 00...")
+                partial_pin = [0,0,0,0,0,0]
+            
+            # Start Brute Force from 0
+            final_pin = self.brute_force(partial_pin, start_index=0)
         
         if final_pin:
             log("Done.")
